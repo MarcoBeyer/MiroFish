@@ -1,0 +1,7 @@
+:80 {
+    basicauth * {
+        {env.PROXY_USER} {env.PROXY_PASSWORD_HASH}
+    }
+
+    reverse_proxy mirofish:3000
+}

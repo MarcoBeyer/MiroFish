@@ -1,0 +1,38 @@
+services:
+  mirofish:
+    image: ghcr.io/666ghj/mirofish:latest
+    container_name: mirofish
+    env_file:
+      - .env
+    # No ports exposed directly — only reachable via proxy
+    restart: unless-stopped
+    volumes:
+      - ./backend/uploads:/app/backend/uploads
+    networks:
+      - mirofish-internal
+
+  proxy:
+    image: caddy:2-alpine
+    container_name: mirofish-proxy
+    restart: unless-stopped
+    ports:
+      - "${PROXY_PORT:-3000}:80"
+    environment:
+      - PROXY_USER=${PROXY_USER}
+      - PROXY_PASSWORD_HASH=${PROXY_PASSWORD_HASH}
+    volumes:
+      - ./Caddyfile.coolify:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - mirofish
+    networks:
+      - mirofish-internal
+
+volumes:
+  caddy_data:
+  caddy_config:
+
+networks:
+  mirofish-internal:
+    driver: bridge

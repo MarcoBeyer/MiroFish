@@ -35,7 +35,7 @@ configs:
   caddyfile:
     content: |
       :80 {
-          basicauth * {
+          basic_auth * {
               {env.PROXY_USER} {env.PROXY_PASSWORD_HASH}
           }
           reverse_proxy mirofish:3000

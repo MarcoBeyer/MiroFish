@@ -85,6 +85,7 @@ def get_graphiti():
         from graphiti_core.llm_client import LLMConfig
         from graphiti_core.llm_client.openai_client import OpenAIClient
         from graphiti_core.embedder.openai import OpenAIEmbedder, OpenAIEmbedderConfig
+        from graphiti_core.cross_encoder.openai_reranker_client import OpenAIRerankerClient
 
         logger.info(
             "Initializing Graphiti client: uri=%s user=%s model=%s",
@@ -108,12 +109,20 @@ def get_graphiti():
             )
         )
 
+        cross_encoder = OpenAIRerankerClient(
+            config=LLMConfig(
+                api_key=Config.LLM_API_KEY,
+                base_url=Config.LLM_BASE_URL,
+            )
+        )
+
         _graphiti_instance = Graphiti(
             Config.NEO4J_URI,
             Config.NEO4J_USER,
             Config.NEO4J_PASSWORD,
             llm_client=llm_client,
             embedder=embedder,
+            cross_encoder=cross_encoder,
         )
 
         # Create indices / constraints in Neo4j (idempotent)

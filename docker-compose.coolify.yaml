@@ -36,6 +36,9 @@ configs:
           basic_auth * {
               {env.PROXY_USER} {env.PROXY_PASSWORD_HASH}
           }
+          reverse_proxy /api/* mirofish:5001 {
+              header_up Host localhost
+          }
           reverse_proxy mirofish:3000 {
               header_up Host localhost
           }

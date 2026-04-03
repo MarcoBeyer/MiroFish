@@ -320,7 +320,7 @@ class OasisProfileGenerator:
                 try:
                     return run_async(self.graphiti_client.search(
                         query=comprehensive_query,
-                        group_id=self.graph_id,
+                        group_ids=[self.graph_id],
                         num_results=30,
                     ))
                 except Exception as e:

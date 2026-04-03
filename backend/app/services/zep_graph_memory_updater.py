@@ -9,7 +9,7 @@ import threading
 import json
 from typing import Dict, Any, List, Optional, Callable
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from queue import Queue, Empty
 
 from ..config import Config
@@ -402,8 +402,8 @@ class ZepGraphMemoryUpdater:
                 run_async(self.graphiti.add_episode(
                     name=f"sim_activity_{platform}_{int(time.time())}",
                     episode_body=combined_text,
-                    source="text",
                     source_description=f"MiroFish simulation activity ({platform})",
+                    reference_time=datetime.now(timezone.utc),
                     group_id=self.graph_id,
                 ))
                 

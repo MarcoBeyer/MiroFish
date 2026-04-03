@@ -487,7 +487,7 @@ class ZepToolsService:
                 func=lambda: run_async(
                     self.graphiti.search(
                         query=query,
-                        group_id=graph_id,
+                        group_ids=[graph_id],
                         num_results=limit,
                     )
                 ),

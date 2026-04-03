@@ -14,7 +14,7 @@ flask-cors>=6.0.0
 openai>=1.0.0
 
 # ============= Graphiti (self-hosted graph memory) =============
-graphiti-core>=0.5.0
+graphiti-core>=0.9.0
 
 # ============= OASIS 社交媒体模拟 =============
 # OASIS 社交模拟框架

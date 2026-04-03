@@ -6,6 +6,7 @@
 import uuid
 import time
 import threading
+from datetime import datetime, timezone
 from typing import Dict, Any, List, Optional, Callable
 from dataclasses import dataclass
 
@@ -236,8 +237,8 @@ class GraphBuilderService:
                 run_async(self.graphiti.add_episode(
                     name=ep_name,
                     episode_body=chunk,
-                    source="text",
                     source_description="MiroFish document chunk",
+                    reference_time=datetime.now(timezone.utc),
                     group_id=graph_id,
                     entity_types=self._entity_types,
                     edge_types=self._edge_types,

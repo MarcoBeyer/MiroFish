@@ -109,9 +109,9 @@ def get_graphiti():
         )
 
         _graphiti_instance = Graphiti(
-            neo4j_uri=Config.NEO4J_URI,
-            neo4j_user=Config.NEO4J_USER,
-            neo4j_password=Config.NEO4J_PASSWORD,
+            Config.NEO4J_URI,
+            Config.NEO4J_USER,
+            Config.NEO4J_PASSWORD,
             llm_client=llm_client,
             embedder=embedder,
         )

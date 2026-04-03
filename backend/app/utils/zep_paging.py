@@ -1,143 +1,108 @@
-"""Zep Graph 分页读取工具。
+"""Graph 节点/边读取工具 (Graphiti / Neo4j)。
 
-Zep 的 node/edge 列表接口使用 UUID cursor 分页，
-本模块封装自动翻页逻辑（含单页重试），对调用方透明地返回完整列表。
+替代原先的 Zep Cloud 分页逻辑。Graphiti 使用 Neo4j 存储，
+通过 group_id 隔离不同图谱的数据，直接查询即可获取完整列表。
 """
 
 from __future__ import annotations
 
 import time
-from collections.abc import Callable
-from typing import Any
-
-from zep_cloud import InternalServerError
-from zep_cloud.client import Zep
+from typing import Any, List
 
 from .logger import get_logger
 
-logger = get_logger('mirofish.zep_paging')
+logger = get_logger('mirofish.graph_paging')
 
-_DEFAULT_PAGE_SIZE = 100
-_MAX_NODES = 2000
 _DEFAULT_MAX_RETRIES = 3
 _DEFAULT_RETRY_DELAY = 2.0  # seconds, doubles each retry
+_MAX_NODES = 2000
 
 
-def _fetch_page_with_retry(
-    api_call: Callable[..., list[Any]],
-    *args: Any,
-    max_retries: int = _DEFAULT_MAX_RETRIES,
-    retry_delay: float = _DEFAULT_RETRY_DELAY,
-    page_description: str = "page",
-    **kwargs: Any,
-) -> list[Any]:
-    """单页请求，失败时指数退避重试。仅重试网络/IO类瞬态错误。"""
-    if max_retries < 1:
-        raise ValueError("max_retries must be >= 1")
-
-    last_exception: Exception | None = None
+def _with_retry(func, *args, max_retries=_DEFAULT_MAX_RETRIES,
+                retry_delay=_DEFAULT_RETRY_DELAY, description="operation",
+                **kwargs) -> Any:
+    """Execute *func* with exponential-backoff retry on transient errors."""
+    last_exc: Exception | None = None
     delay = retry_delay
 
     for attempt in range(max_retries):
         try:
-            return api_call(*args, **kwargs)
-        except (ConnectionError, TimeoutError, OSError, InternalServerError) as e:
-            last_exception = e
+            return func(*args, **kwargs)
+        except (ConnectionError, TimeoutError, OSError) as e:
+            last_exc = e
             if attempt < max_retries - 1:
                 logger.warning(
-                    f"Zep {page_description} attempt {attempt + 1} failed: {str(e)[:100]}, retrying in {delay:.1f}s..."
+                    "%s attempt %d failed: %s, retrying in %.1fs...",
+                    description, attempt + 1, str(e)[:100], delay,
                 )
                 time.sleep(delay)
                 delay *= 2
             else:
-                logger.error(f"Zep {page_description} failed after {max_retries} attempts: {str(e)}")
+                logger.error("%s failed after %d attempts: %s",
+                             description, max_retries, str(e))
 
-    assert last_exception is not None
-    raise last_exception
+    assert last_exc is not None
+    raise last_exc
 
 
 def fetch_all_nodes(
-    client: Zep,
-    graph_id: str,
-    page_size: int = _DEFAULT_PAGE_SIZE,
+    graphiti,
+    group_id: str,
     max_items: int = _MAX_NODES,
     max_retries: int = _DEFAULT_MAX_RETRIES,
     retry_delay: float = _DEFAULT_RETRY_DELAY,
-) -> list[Any]:
-    """分页获取图谱节点，最多返回 max_items 条（默认 2000）。每页请求自带重试。"""
-    all_nodes: list[Any] = []
-    cursor: str | None = None
-    page_num = 0
+) -> List[Any]:
+    """Retrieve all entity nodes for *group_id* from Neo4j via Graphiti.
 
-    while True:
-        kwargs: dict[str, Any] = {"limit": page_size}
-        if cursor is not None:
-            kwargs["uuid_cursor"] = cursor
+    Returns a list of EntityNode objects (up to *max_items*).
+    """
+    from .graphiti_client import run_async
 
-        page_num += 1
-        batch = _fetch_page_with_retry(
-            client.graph.node.get_by_graph_id,
-            graph_id,
-            max_retries=max_retries,
-            retry_delay=retry_delay,
-            page_description=f"fetch nodes page {page_num} (graph={graph_id})",
-            **kwargs,
+    async def _fetch():
+        driver = graphiti.driver
+        records, _, _ = await driver.execute_query(
+            "MATCH (n:Entity) WHERE n.group_id = $gid "
+            "RETURN n ORDER BY n.created_at DESC LIMIT $limit",
+            gid=group_id,
+            limit=max_items,
         )
-        if not batch:
-            break
+        return [record["n"] for record in records]
 
-        all_nodes.extend(batch)
-        if len(all_nodes) >= max_items:
-            all_nodes = all_nodes[:max_items]
-            logger.warning(f"Node count reached limit ({max_items}), stopping pagination for graph {graph_id}")
-            break
-        if len(batch) < page_size:
-            break
-
-        cursor = getattr(batch[-1], "uuid_", None) or getattr(batch[-1], "uuid", None)
-        if cursor is None:
-            logger.warning(f"Node missing uuid field, stopping pagination at {len(all_nodes)} nodes")
-            break
-
-    return all_nodes
+    return _with_retry(
+        lambda: run_async(_fetch()),
+        max_retries=max_retries,
+        retry_delay=retry_delay,
+        description=f"fetch nodes (group={group_id})",
+    )
 
 
 def fetch_all_edges(
-    client: Zep,
-    graph_id: str,
-    page_size: int = _DEFAULT_PAGE_SIZE,
+    graphiti,
+    group_id: str,
     max_retries: int = _DEFAULT_MAX_RETRIES,
     retry_delay: float = _DEFAULT_RETRY_DELAY,
-) -> list[Any]:
-    """分页获取图谱所有边，返回完整列表。每页请求自带重试。"""
-    all_edges: list[Any] = []
-    cursor: str | None = None
-    page_num = 0
+) -> List[Any]:
+    """Retrieve all entity edges for *group_id* from Neo4j via Graphiti.
 
-    while True:
-        kwargs: dict[str, Any] = {"limit": page_size}
-        if cursor is not None:
-            kwargs["uuid_cursor"] = cursor
+    Returns a list of relationship records.
+    """
+    from .graphiti_client import run_async
 
-        page_num += 1
-        batch = _fetch_page_with_retry(
-            client.graph.edge.get_by_graph_id,
-            graph_id,
-            max_retries=max_retries,
-            retry_delay=retry_delay,
-            page_description=f"fetch edges page {page_num} (graph={graph_id})",
-            **kwargs,
+    async def _fetch():
+        driver = graphiti.driver
+        records, _, _ = await driver.execute_query(
+            "MATCH (s:Entity)-[r:RELATES_TO]->(t:Entity) "
+            "WHERE r.group_id = $gid "
+            "RETURN r, s.uuid AS source_uuid, s.name AS source_name, "
+            "       t.uuid AS target_uuid, t.name AS target_name "
+            "ORDER BY r.created_at DESC",
+            gid=group_id,
         )
-        if not batch:
-            break
+        return records
 
-        all_edges.extend(batch)
-        if len(batch) < page_size:
-            break
-
-        cursor = getattr(batch[-1], "uuid_", None) or getattr(batch[-1], "uuid", None)
-        if cursor is None:
-            logger.warning(f"Edge missing uuid field, stopping pagination at {len(all_edges)} edges")
-            break
-
-    return all_edges
+    return _with_retry(
+        lambda: run_async(_fetch()),
+        max_retries=max_retries,
+        retry_delay=retry_delay,
+        description=f"fetch edges (group={group_id})",
+    )

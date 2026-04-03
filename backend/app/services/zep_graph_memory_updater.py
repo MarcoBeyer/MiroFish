@@ -1,6 +1,6 @@
 """
-Zep图谱记忆更新服务
-将模拟中的Agent活动动态更新到Zep图谱中
+图谱记忆更新服务
+将模拟中的Agent活动动态更新到 Graphiti 图谱中
 """
 
 import os
@@ -12,10 +12,9 @@ from dataclasses import dataclass
 from datetime import datetime
 from queue import Queue, Empty
 
-from zep_cloud.client import Zep
-
 from ..config import Config
 from ..utils.logger import get_logger
+from ..utils.graphiti_client import get_graphiti, run_async
 
 logger = get_logger('mirofish.zep_graph_memory_updater')
 
@@ -231,18 +230,13 @@ class ZepGraphMemoryUpdater:
     def __init__(self, graph_id: str, api_key: Optional[str] = None):
         """
         初始化更新器
-        
+
         Args:
-            graph_id: Zep图谱ID
-            api_key: Zep API Key（可选，默认从配置读取）
+            graph_id: 图谱 group_id
+            api_key: 保留参数，不再使用
         """
         self.graph_id = graph_id
-        self.api_key = api_key or Config.ZEP_API_KEY
-        
-        if not self.api_key:
-            raise ValueError("ZEP_API_KEY未配置")
-        
-        self.client = Zep(api_key=self.api_key)
+        self.graphiti = get_graphiti()
         
         # 活动队列
         self._activity_queue: Queue = Queue()
@@ -405,11 +399,13 @@ class ZepGraphMemoryUpdater:
         # 带重试的发送
         for attempt in range(self.MAX_RETRIES):
             try:
-                self.client.graph.add(
-                    graph_id=self.graph_id,
-                    type="text",
-                    data=combined_text
-                )
+                run_async(self.graphiti.add_episode(
+                    name=f"sim_activity_{platform}_{int(time.time())}",
+                    episode_body=combined_text,
+                    source="text",
+                    source_description=f"MiroFish simulation activity ({platform})",
+                    group_id=self.graph_id,
+                ))
                 
                 self._total_sent += 1
                 self._total_items_sent += len(activities)

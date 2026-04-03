@@ -15,8 +15,6 @@ services:
     image: caddy:2-alpine
     container_name: mirofish-proxy
     restart: unless-stopped
-    ports:
-      - "${PROXY_PORT:-3000}:80"
     environment:
       - PROXY_USER=${PROXY_USER}
       - PROXY_PASSWORD_HASH=${PROXY_PASSWORD_HASH}

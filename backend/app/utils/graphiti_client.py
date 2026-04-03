@@ -84,7 +84,7 @@ def get_graphiti():
         from graphiti_core import Graphiti
         from graphiti_core.llm_client import LLMConfig
         from graphiti_core.llm_client.openai_client import OpenAIClient
-        from graphiti_core.embedder.openai import OpenAIEmbedder, EmbedderConfig
+        from graphiti_core.embedder.openai import OpenAIEmbedder, OpenAIEmbedderConfig
 
         logger.info(
             "Initializing Graphiti client: uri=%s user=%s model=%s",
@@ -102,7 +102,7 @@ def get_graphiti():
         )
 
         embedder = OpenAIEmbedder(
-            config=EmbedderConfig(
+            config=OpenAIEmbedderConfig(
                 api_key=Config.LLM_API_KEY,
                 base_url=Config.LLM_BASE_URL,
             )

@@ -20,14 +20,26 @@ services:
     environment:
       - PROXY_USER=${PROXY_USER}
       - PROXY_PASSWORD_HASH=${PROXY_PASSWORD_HASH}
+    configs:
+      - source: caddyfile
+        target: /etc/caddy/Caddyfile
     volumes:
-      - ./Caddyfile.coolify:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
       - caddy_config:/config
     depends_on:
       - mirofish
     networks:
       - mirofish-internal
+
+configs:
+  caddyfile:
+    content: |
+      :80 {
+          basicauth * {
+              {env.PROXY_USER} {env.PROXY_PASSWORD_HASH}
+          }
+          reverse_proxy mirofish:3000
+      }
 
 volumes:
   caddy_data:

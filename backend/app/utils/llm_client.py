@@ -148,6 +148,8 @@ class FallbackLLMClient:
                 z.ai / GLM doesn't support OpenAI structured outputs, so the parse()
                 call always fails. Instead, use json_object response_format with
                 explicit field-name instructions in the prompt.
+
+                Returns (dict, input_tokens, output_tokens) to match 0.28.x API.
                 """
                 from graphiti_core.llm_client.config import DEFAULT_MAX_TOKENS, ModelSize as MS
                 if model_size is None:
@@ -181,6 +183,9 @@ class FallbackLLMClient:
                     max_tokens=max_tokens,
                 )
                 raw = response.choices[0].message.content
+                usage = getattr(response, 'usage', None)
+                input_tokens = getattr(usage, 'prompt_tokens', 0) if usage else 0
+                output_tokens = getattr(usage, 'completion_tokens', 0) if usage else 0
                 try:
                     data = json.loads(raw)
                 except json.JSONDecodeError as e:
@@ -195,7 +200,8 @@ class FallbackLLMClient:
                             pass
                 remapped = _fuzzy_remap(data, response_model)
                 try:
-                    return response_model.model_validate(remapped).model_dump()
+                    result = response_model.model_validate(remapped).model_dump()
+                    return result, input_tokens, output_tokens
                 except ValidationError as e:
                     raise ValueError(
                         f"JSON mode fallback still failed after remapping. Response: {raw[:400]}"

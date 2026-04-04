@@ -120,6 +120,14 @@ class FallbackLLMClient:
                     data = json.loads(raw)
                 except json.JSONDecodeError as e:
                     raise ValueError(f"JSON mode returned non-JSON: {raw[:200]}") from e
+                # GLM sometimes returns values as JSON-encoded strings, e.g.
+                # {"answer": "[{...}]"} instead of {"answer": [{...}]}
+                for k, v in data.items():
+                    if isinstance(v, str) and v.startswith(('[', '{')):
+                        try:
+                            data[k] = json.loads(v)
+                        except json.JSONDecodeError:
+                            pass
                 remapped = _fuzzy_remap(data, response_model)
                 try:
                     return response_model.model_validate(remapped).model_dump()

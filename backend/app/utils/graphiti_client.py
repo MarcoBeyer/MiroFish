@@ -107,6 +107,7 @@ def get_graphiti():
             config=OpenAIEmbedderConfig(
                 api_key=Config.LLM_API_KEY,
                 base_url=Config.LLM_BASE_URL,
+                embedding_model=Config.LLM_EMBEDDING_MODEL,
             )
         )
 

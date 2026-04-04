@@ -202,10 +202,33 @@ class FallbackLLMClient:
                 try:
                     result = response_model.model_validate(remapped).model_dump()
                     return result, input_tokens, output_tokens
-                except ValidationError as e:
-                    raise ValueError(
-                        f"JSON mode fallback still failed after remapping. Response: {raw[:400]}"
-                    ) from e
+                except ValidationError:
+                    # Last resort: try to construct a valid empty/default instance.
+                    # This handles cases where the LLM returns a completely wrong
+                    # structure (e.g. EdgeDuplicate expects list[int] indices but
+                    # GLM returns a UUID string).
+                    try:
+                        defaults = {}
+                        for fname, finfo in response_model.model_fields.items():
+                            ann_str = str(finfo.annotation).lower()
+                            if 'list' in ann_str:
+                                defaults[fname] = []
+                            elif 'str' in ann_str:
+                                defaults[fname] = ''
+                            elif 'int' in ann_str or 'float' in ann_str:
+                                defaults[fname] = 0
+                            elif 'bool' in ann_str:
+                                defaults[fname] = False
+                        result = response_model.model_validate(defaults).model_dump()
+                        logger.warning(
+                            "JSON fallback used empty defaults for %s (LLM returned incompatible structure)",
+                            response_model.__name__,
+                        )
+                        return result, input_tokens, output_tokens
+                    except Exception as e2:
+                        raise ValueError(
+                            f"JSON mode fallback still failed after remapping. Response: {raw[:400]}"
+                        ) from e2
 
         return _FallbackOpenAIClient(config=config)
 

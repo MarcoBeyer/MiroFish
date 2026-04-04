@@ -99,6 +99,7 @@ def get_graphiti():
                 api_key=Config.LLM_API_KEY,
                 base_url=Config.LLM_BASE_URL,
                 model=Config.LLM_MODEL_NAME,
+                small_model=Config.LLM_MODEL_NAME,
             )
         )
 
@@ -113,6 +114,8 @@ def get_graphiti():
             config=LLMConfig(
                 api_key=Config.LLM_API_KEY,
                 base_url=Config.LLM_BASE_URL,
+                model=Config.LLM_MODEL_NAME,
+                small_model=Config.LLM_MODEL_NAME,
             )
         )
 

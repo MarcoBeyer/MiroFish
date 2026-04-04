@@ -101,13 +101,8 @@ class FallbackLLMClient:
                     return await self._json_fallback(messages, response_model, max_tokens, model_size)
 
             async def _json_fallback(self, messages, response_model, max_tokens, model_size):
-                from graphiti_core.llm_client.openai_client import DEFAULT_MODEL, DEFAULT_SMALL_MODEL
                 from graphiti_core.llm_client.config import ModelSize as MS
-                model = (
-                    (self.small_model or DEFAULT_SMALL_MODEL)
-                    if model_size == MS.small
-                    else (self.model or DEFAULT_MODEL)
-                )
+                model = self.small_model if model_size == MS.small else self.model
                 openai_messages = [
                     {"role": m.role, "content": m.content}
                     for m in messages

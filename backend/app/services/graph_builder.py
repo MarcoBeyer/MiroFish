@@ -241,8 +241,6 @@ class GraphBuilderService:
                     reference_time=datetime.now(timezone.utc),
                     group_id=graph_id,
                     entity_types=self._entity_types,
-                    edge_types=self._edge_types,
-                    edge_type_map=self._edge_type_map,
                 ))
                 episode_names.append(ep_name)
             except Exception as e:

@@ -21,21 +21,47 @@ logger = logging.getLogger("mirofish.llm_client")
 # ---------------------------------------------------------------------------
 
 def _fuzzy_remap(data: dict, model: type[BaseModel]) -> dict:
-    """Remap *data* keys to match *model* field names using substring matching.
+    """Remap *data* keys to match *model* field names.
 
-    Handles cases where LLMs return ``entities`` instead of ``extracted_entities``.
+    Strategy (in order):
+    1. Substring match — ``entities`` → ``extracted_entities``
+    2. Type match — if a required field expects list[X] and only one response
+       key has a list value, map it regardless of name (``answer`` → ``extracted_entities``)
     """
     required = {k for k, v in model.model_fields.items() if v.is_required()}
     if required.issubset(data.keys()):
         return data  # nothing to fix
 
     result = dict(data)
-    for field in set(model.model_fields.keys()) - data.keys():
-        for resp_key in data.keys():
+    missing = set(model.model_fields.keys()) - result.keys()
+    extra = set(result.keys()) - set(model.model_fields.keys())
+
+    # Pass 1: substring match
+    for field in list(missing):
+        for resp_key in list(extra):
             if resp_key in field or field in resp_key:
                 result[field] = result.pop(resp_key)
-                logger.debug("fuzzy-remapped response key '%s' → model field '%s'", resp_key, field)
+                missing.discard(field)
+                extra.discard(resp_key)
+                logger.debug("fuzzy-remapped '%s' → '%s' (substring)", resp_key, field)
                 break
+
+    # Pass 2: if exactly one required field is still missing, map it to the
+    # single remaining extra key whose value type is compatible (both list, both dict, etc.)
+    still_missing = missing & required
+    if still_missing and extra:
+        for field in list(still_missing):
+            field_info = model.model_fields[field]
+            # Check if the field annotation contains 'list'
+            is_list_field = 'list' in str(field_info.annotation).lower()
+            candidates = [k for k in extra if isinstance(result.get(k), list) == is_list_field]
+            if len(candidates) == 1:
+                resp_key = candidates[0]
+                result[field] = result.pop(resp_key)
+                still_missing.discard(field)
+                extra.discard(resp_key)
+                logger.debug("fuzzy-remapped '%s' → '%s' (type match)", resp_key, field)
+
     return result
 
 

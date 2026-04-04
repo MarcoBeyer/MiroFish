@@ -62,6 +62,11 @@ configs:
           }
           reverse_proxy /api/* mirofish:5001 {
               header_up Host localhost
+              transport http {
+                  response_header_timeout 600s
+                  dial_timeout 30s
+              }
+              flush_interval -1
           }
           reverse_proxy mirofish:3000 {
               header_up Host localhost

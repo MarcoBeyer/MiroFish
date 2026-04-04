@@ -103,13 +103,31 @@ def get_graphiti():
             )
         )
 
-        embedder = OpenAIEmbedder(
+        _inner_embedder = OpenAIEmbedder(
             config=OpenAIEmbedderConfig(
                 api_key=Config.EMBEDDING_API_KEY,
                 base_url=Config.EMBEDDING_BASE_URL,
                 embedding_model=Config.EMBEDDING_MODEL,
             )
         )
+
+        # Wrap embedder to handle empty inputs (OpenAI rejects empty arrays)
+        class SafeEmbedder:
+            """Proxy that returns zero-vectors for empty inputs."""
+            def __init__(self, inner):
+                self._inner = inner
+            def __getattr__(self, name):
+                return getattr(self._inner, name)
+            async def create(self, input_data):
+                if not input_data:
+                    return [0.0] * self._inner.config.embedding_dim
+                return await self._inner.create(input_data)
+            async def create_batch(self, input_data_list):
+                if not input_data_list:
+                    return []
+                return await self._inner.create_batch(input_data_list)
+
+        embedder = SafeEmbedder(_inner_embedder)
 
         cross_encoder = OpenAIRerankerClient(
             config=LLMConfig(

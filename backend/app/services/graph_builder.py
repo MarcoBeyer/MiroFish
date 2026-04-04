@@ -211,6 +211,41 @@ class GraphBuilderService:
         self._edge_types = edge_types if edge_types else None
         self._edge_type_map = edge_type_map if edge_type_map else None
 
+        # Build a custom prompt snippet for edge extraction.
+        # graphiti 0.11.6 doesn't support edge_types natively, but the
+        # extract_edges prompt has a {custom_prompt} slot we can leverage
+        # by monkey-patching the prompt function.
+        if edge_types:
+            self._install_edge_type_prompt(edge_types, edge_type_map)
+
+    def _install_edge_type_prompt(self, edge_types: Dict[str, Any], edge_type_map: Dict[tuple, list]):
+        """Monkey-patch graphiti's edge extraction prompt to include edge type constraints."""
+        lines = ["# ALLOWED RELATIONSHIP TYPES", "Use ONLY the following relation_type values:"]
+        for name, cls in edge_types.items():
+            desc = cls.__doc__ or name
+            lines.append(f"- {name}: {desc}")
+
+        if edge_type_map:
+            lines.append("")
+            lines.append("# VALID SOURCE → TARGET PAIRS PER RELATION TYPE")
+            for (src, tgt), rel_names in edge_type_map.items():
+                for rel_name in rel_names:
+                    lines.append(f"- {rel_name}: {src} → {tgt}")
+
+        edge_prompt_text = "\n".join(lines)
+
+        # Monkey-patch graphiti's edge extraction to inject edge type context.
+        # extract_edges() builds a context dict with custom_prompt='', we
+        # patch the prompt function so our edge types appear in that slot.
+        import graphiti_core.prompts.extract_edges as _edge_prompts
+        _original_edge_fn = _edge_prompts.edge
+
+        def _patched_edge(context):
+            context['custom_prompt'] = edge_prompt_text + "\n" + context.get('custom_prompt', '')
+            return _original_edge_fn(context)
+
+        _edge_prompts.edge = _patched_edge
+
     def add_text_batches(
         self,
         graph_id: str,

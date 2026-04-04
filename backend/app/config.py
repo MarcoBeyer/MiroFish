@@ -31,7 +31,11 @@ class Config:
     LLM_API_KEY = os.environ.get('LLM_API_KEY')
     LLM_BASE_URL = os.environ.get('LLM_BASE_URL', 'https://api.openai.com/v1')
     LLM_MODEL_NAME = os.environ.get('LLM_MODEL_NAME', 'gpt-4o-mini')
-    LLM_EMBEDDING_MODEL = os.environ.get('LLM_EMBEDDING_MODEL', 'text-embedding-3-small')
+
+    # Embedding config (defaults to LLM values if not set separately)
+    EMBEDDING_API_KEY = os.environ.get('EMBEDDING_API_KEY') or os.environ.get('LLM_API_KEY')
+    EMBEDDING_BASE_URL = os.environ.get('EMBEDDING_BASE_URL') or os.environ.get('LLM_BASE_URL', 'https://api.openai.com/v1')
+    EMBEDDING_MODEL = os.environ.get('EMBEDDING_MODEL', 'text-embedding-3-small')
     
     # Graphiti / Neo4j 配置 (replaces Zep Cloud)
     NEO4J_URI = os.environ.get('NEO4J_URI', 'bolt://localhost:7687')

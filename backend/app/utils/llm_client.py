@@ -92,6 +92,40 @@ def _remap_nested(data: dict, model: type[BaseModel]) -> dict:
     return data
 
 
+def _build_schema_instruction(model: type[BaseModel]) -> str:
+    """Build explicit field-name instructions from a Pydantic model.
+
+    Instead of dumping raw JSON schema (which GLM ignores), produce
+    a clear example showing the exact keys the model must use.
+    """
+    def _describe_model(m: type[BaseModel], indent: int = 2) -> str:
+        lines = []
+        prefix = " " * indent
+        for name, field in m.model_fields.items():
+            ann = field.annotation
+            origin = getattr(ann, '__origin__', None)
+            if origin is list:
+                args = getattr(ann, '__args__', ())
+                if args and isinstance(args[0], type) and issubclass(args[0], BaseModel):
+                    inner = _describe_model(args[0], indent + 4)
+                    lines.append(f'{prefix}"{name}": [{{\n{inner}\n{prefix}  }}]')
+                else:
+                    lines.append(f'{prefix}"{name}": [...]')
+            elif isinstance(ann, type) and issubclass(ann, BaseModel):
+                inner = _describe_model(ann, indent + 2)
+                lines.append(f'{prefix}"{name}": {{\n{inner}\n{prefix}}}')
+            else:
+                desc = field.description or name
+                lines.append(f'{prefix}"{name}": "<{desc}>"')
+        return ",\n".join(lines)
+
+    body = _describe_model(model)
+    return (
+        f"\n\nIMPORTANT: You MUST respond with a JSON object using EXACTLY these field names "
+        f"(do NOT rename any field):\n{{\n{body}\n}}"
+    )
+
+
 class FallbackLLMClient:
     """Subclass of graphiti's OpenAIClient with a JSON-mode fallback.
 
@@ -109,23 +143,20 @@ class FallbackLLMClient:
         # Dynamically create a subclass of OpenAIClient so isinstance checks pass
         class _FallbackOpenAIClient(OpenAIClient):
             async def _generate_response(self, messages, response_model=None, max_tokens=None, model_size=None):
+                """Skip beta.chat.completions.parse() entirely — go straight to JSON mode.
+
+                z.ai / GLM doesn't support OpenAI structured outputs, so the parse()
+                call always fails. Instead, use json_object response_format with
+                explicit field-name instructions in the prompt.
+                """
                 from graphiti_core.llm_client.config import DEFAULT_MAX_TOKENS, ModelSize as MS
                 if model_size is None:
                     model_size = MS.medium
                 if max_tokens is None:
                     max_tokens = DEFAULT_MAX_TOKENS
-                try:
-                    return await super()._generate_response(messages, response_model, max_tokens, model_size)
-                except Exception as exc:
-                    if response_model is None:
-                        raise
-                    err = str(exc).lower()
-                    if "validation error" not in err and "field required" not in err:
-                        raise
-                    logger.warning(
-                        "Structured output validation failed (%s). Retrying with JSON mode.", exc
-                    )
+                if response_model is not None:
                     return await self._json_fallback(messages, response_model, max_tokens, model_size)
+                return await super()._generate_response(messages, response_model, max_tokens, model_size)
 
             async def _json_fallback(self, messages, response_model, max_tokens, model_size):
                 from graphiti_core.llm_client.config import ModelSize as MS
@@ -135,6 +166,13 @@ class FallbackLLMClient:
                     for m in messages
                     if m.role in ("user", "system")
                 ]
+
+                # Build explicit field instructions from the Pydantic model
+                # so GLM uses exact field names instead of inventing its own
+                schema_instruction = _build_schema_instruction(response_model)
+                if openai_messages:
+                    openai_messages[-1]["content"] += schema_instruction
+
                 response = await self.client.chat.completions.create(
                     model=model,
                     messages=openai_messages,

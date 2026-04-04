@@ -20,17 +20,31 @@ logger = logging.getLogger("mirofish.llm_client")
 # Graphiti structured-output fallback client
 # ---------------------------------------------------------------------------
 
+def _get_inner_model(field_info) -> type[BaseModel] | None:
+    """Extract the Pydantic model from a field annotation like list[Edge]."""
+    import typing
+    ann = field_info.annotation
+    origin = getattr(ann, '__origin__', None)
+    if origin is list:
+        args = getattr(ann, '__args__', ())
+        if args and isinstance(args[0], type) and issubclass(args[0], BaseModel):
+            return args[0]
+    return None
+
+
 def _fuzzy_remap(data: dict, model: type[BaseModel]) -> dict:
-    """Remap *data* keys to match *model* field names.
+    """Remap *data* keys to match *model* field names, recursively.
 
     Strategy (in order):
     1. Substring match — ``entities`` → ``extracted_entities``
     2. Type match — if a required field expects list[X] and only one response
        key has a list value, map it regardless of name (``answer`` → ``extracted_entities``)
+    3. Recurse into nested Pydantic models (e.g. list[Edge] items)
     """
     required = {k for k, v in model.model_fields.items() if v.is_required()}
     if required.issubset(data.keys()):
-        return data  # nothing to fix
+        # Keys match — but still recurse into nested models
+        return _remap_nested(data, model)
 
     result = dict(data)
     missing = set(model.model_fields.keys()) - result.keys()
@@ -46,13 +60,11 @@ def _fuzzy_remap(data: dict, model: type[BaseModel]) -> dict:
                 logger.debug("fuzzy-remapped '%s' → '%s' (substring)", resp_key, field)
                 break
 
-    # Pass 2: if exactly one required field is still missing, map it to the
-    # single remaining extra key whose value type is compatible (both list, both dict, etc.)
+    # Pass 2: type-based match for remaining missing required fields
     still_missing = missing & required
     if still_missing and extra:
         for field in list(still_missing):
             field_info = model.model_fields[field]
-            # Check if the field annotation contains 'list'
             is_list_field = 'list' in str(field_info.annotation).lower()
             candidates = [k for k in extra if isinstance(result.get(k), list) == is_list_field]
             if len(candidates) == 1:
@@ -62,7 +74,22 @@ def _fuzzy_remap(data: dict, model: type[BaseModel]) -> dict:
                 extra.discard(resp_key)
                 logger.debug("fuzzy-remapped '%s' → '%s' (type match)", resp_key, field)
 
-    return result
+    return _remap_nested(result, model)
+
+
+def _remap_nested(data: dict, model: type[BaseModel]) -> dict:
+    """Recurse into list[SomePydanticModel] fields and remap each item."""
+    for field_name, field_info in model.model_fields.items():
+        inner = _get_inner_model(field_info)
+        if inner is None or field_name not in data:
+            continue
+        val = data[field_name]
+        if isinstance(val, list):
+            data[field_name] = [
+                _fuzzy_remap(item, inner) if isinstance(item, dict) else item
+                for item in val
+            ]
+    return data
 
 
 class FallbackLLMClient:

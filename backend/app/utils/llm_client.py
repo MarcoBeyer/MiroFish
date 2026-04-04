@@ -40,86 +40,74 @@ def _fuzzy_remap(data: dict, model: type[BaseModel]) -> dict:
 
 
 class FallbackLLMClient:
-    """Wraps graphiti's OpenAIClient with a JSON-mode fallback.
+    """Subclass of graphiti's OpenAIClient with a JSON-mode fallback.
 
-    On the first attempt it delegates to the wrapped client (structured outputs
-    via ``beta.chat.completions.parse``).  If the model returns JSON with wrong
-    field names and pydantic raises a ValidationError, this client retries using
-    plain ``json_object`` response mode and applies fuzzy field remapping before
-    Pydantic validation.
+    Overrides ``_generate_response`` to catch pydantic ValidationErrors caused
+    by field-name mismatches (e.g. GLM returns ``entities`` instead of
+    ``extracted_entities``) and retries using plain json_object mode + fuzzy
+    field remapping.
     """
 
-    def __init__(self, inner):
-        self._inner = inner
+    @classmethod
+    def build(cls, config):
+        """Create a FallbackLLMClient that is also an OpenAIClient instance."""
+        from graphiti_core.llm_client.openai_client import OpenAIClient
 
-    def __getattr__(self, name):
-        # Transparent proxy — graphiti internals access .model, .temperature, etc.
-        return getattr(self._inner, name)
+        # Dynamically create a subclass of OpenAIClient so isinstance checks pass
+        class _FallbackOpenAIClient(OpenAIClient):
+            async def _generate_response(self, messages, response_model=None, max_tokens=None, model_size=None):
+                from graphiti_core.llm_client.config import DEFAULT_MAX_TOKENS, ModelSize as MS
+                if model_size is None:
+                    model_size = MS.medium
+                if max_tokens is None:
+                    max_tokens = DEFAULT_MAX_TOKENS
+                try:
+                    return await super()._generate_response(messages, response_model, max_tokens, model_size)
+                except Exception as exc:
+                    if response_model is None:
+                        raise
+                    err = str(exc).lower()
+                    if "validation error" not in err and "field required" not in err:
+                        raise
+                    logger.warning(
+                        "Structured output validation failed (%s). Retrying with JSON mode.", exc
+                    )
+                    return await self._json_fallback(messages, response_model, max_tokens, model_size)
 
-    async def generate_response(self, messages, response_model=None, **kwargs) -> dict:
-        try:
-            return await self._inner.generate_response(
-                messages, response_model=response_model, **kwargs
-            )
-        except Exception as exc:
-            if response_model is None:
-                raise
-            err = str(exc).lower()
-            if "validation error" not in err and "field required" not in err:
-                raise
-            logger.warning(
-                "Structured output validation failed (%s). Retrying with JSON mode.", exc
-            )
-            return await self._json_mode_fallback(messages, response_model, **kwargs)
+            async def _json_fallback(self, messages, response_model, max_tokens, model_size):
+                from graphiti_core.llm_client.openai_client import DEFAULT_MODEL, DEFAULT_SMALL_MODEL
+                from graphiti_core.llm_client.config import ModelSize as MS
+                model = (
+                    (self.small_model or DEFAULT_SMALL_MODEL)
+                    if model_size == MS.small
+                    else (self.model or DEFAULT_MODEL)
+                )
+                openai_messages = [
+                    {"role": m.role, "content": m.content}
+                    for m in messages
+                    if m.role in ("user", "system")
+                ]
+                response = await self.client.chat.completions.create(
+                    model=model,
+                    messages=openai_messages,
+                    response_format={"type": "json_object"},
+                    temperature=self.temperature,
+                    max_tokens=max_tokens,
+                )
+                raw = response.choices[0].message.content
+                try:
+                    data = json.loads(raw)
+                except json.JSONDecodeError as e:
+                    raise ValueError(f"JSON mode returned non-JSON: {raw[:200]}") from e
+                remapped = _fuzzy_remap(data, response_model)
+                try:
+                    return response_model.model_validate(remapped).model_dump()
+                except ValidationError as e:
+                    raise ValueError(
+                        f"JSON mode fallback still failed after remapping. Response: {raw[:400]}"
+                    ) from e
 
-    async def _json_mode_fallback(self, messages, response_model: type[BaseModel], **kwargs):
-        from graphiti_core.llm_client.openai_client import (
-            DEFAULT_MODEL,
-            DEFAULT_SMALL_MODEL,
-            ModelSize,
-        )
-
-        model_size = kwargs.get("model_size", ModelSize.medium)
-        max_tokens = kwargs.get("max_tokens", self._inner.max_tokens)
-        model = (
-            (self._inner.small_model or DEFAULT_SMALL_MODEL)
-            if model_size == ModelSize.small
-            else (self._inner.model or DEFAULT_MODEL)
-        )
-
-        openai_messages = []
-        for m in messages:
-            content = self._inner._clean_input(m.content)
-            if m.role in ("user", "system"):
-                openai_messages.append({"role": m.role, "content": content})
-
-        schema_str = json.dumps(response_model.model_json_schema())
-        if openai_messages:
-            openai_messages[-1]["content"] += (
-                f"\n\nReturn a JSON object matching exactly this schema:\n{schema_str}"
-            )
-
-        response = await self._inner.client.chat.completions.create(
-            model=model,
-            messages=openai_messages,
-            response_format={"type": "json_object"},
-            temperature=self._inner.temperature,
-            max_tokens=max_tokens,
-        )
-
-        raw = response.choices[0].message.content
-        try:
-            data = json.loads(raw)
-        except json.JSONDecodeError as e:
-            raise ValueError(f"JSON mode returned non-JSON: {raw[:200]}") from e
-
-        remapped = _fuzzy_remap(data, response_model)
-        try:
-            return response_model.model_validate(remapped).model_dump()
-        except ValidationError as e:
-            raise ValueError(
-                f"JSON mode fallback still failed after remapping. Response: {raw[:400]}"
-            ) from e
+        return _FallbackOpenAIClient(config=config)
 
 
 class LLMClient:

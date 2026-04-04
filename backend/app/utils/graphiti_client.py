@@ -83,7 +83,6 @@ def get_graphiti():
 
         from graphiti_core import Graphiti
         from graphiti_core.llm_client import LLMConfig
-        from graphiti_core.llm_client.openai_client import OpenAIClient
         from graphiti_core.embedder.openai import OpenAIEmbedder, OpenAIEmbedderConfig
         from graphiti_core.cross_encoder.openai_reranker_client import OpenAIRerankerClient
         from .llm_client import FallbackLLMClient
@@ -95,13 +94,11 @@ def get_graphiti():
             Config.LLM_MODEL_NAME,
         )
 
-        llm_client = FallbackLLMClient(
-            OpenAIClient(
-                config=LLMConfig(
-                    api_key=Config.LLM_API_KEY,
-                    base_url=Config.LLM_BASE_URL,
-                    model=Config.LLM_MODEL_NAME,
-                )
+        llm_client = FallbackLLMClient.build(
+            config=LLMConfig(
+                api_key=Config.LLM_API_KEY,
+                base_url=Config.LLM_BASE_URL,
+                model=Config.LLM_MODEL_NAME,
             )
         )
 

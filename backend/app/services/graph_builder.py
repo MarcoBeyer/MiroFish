@@ -243,6 +243,11 @@ class GraphBuilderService:
                     entity_types=self._entity_types,
                     edge_types=self._edge_types,
                     edge_type_map=self._edge_type_map,
+                    custom_extraction_instructions=(
+                        "IMPORTANT: You MUST only use relation_type values from the provided FACT_TYPES list. "
+                        "Do NOT invent new relation types. If a relationship does not fit any of the provided "
+                        "types, skip that relationship entirely — do not extract it."
+                    ) if self._edge_types else None,
                 ))
                 episode_names.append(ep_name)
             except Exception as e:

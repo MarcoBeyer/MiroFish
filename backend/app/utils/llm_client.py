@@ -320,6 +320,16 @@ class LLMClient:
 
         try:
             return json.loads(cleaned_response)
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as e:
+            # GLM/z.ai 经常生成轻微不合规的 JSON（缺逗号、缺键名等），
+            # 用 json_repair 兜底修复一次再失败
+            try:
+                from json_repair import repair_json
+                repaired = repair_json(cleaned_response, return_objects=True)
+                if isinstance(repaired, (dict, list)):
+                    logger.warning(f"LLM JSON 由 json_repair 修复后才能解析: {e}")
+                    return repaired
+            except Exception as repair_err:
+                logger.error(f"json_repair 修复也失败: {repair_err}")
             raise ValueError(f"LLM返回的JSON格式无效: {cleaned_response}")
 

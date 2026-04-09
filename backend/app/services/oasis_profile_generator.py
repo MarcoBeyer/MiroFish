@@ -68,7 +68,12 @@ class OasisAgentProfile:
     created_at: str = field(default_factory=lambda: datetime.now().strftime("%Y-%m-%d"))
     
     def to_reddit_format(self) -> Dict[str, Any]:
-        """转换为Reddit平台格式"""
+        """转换为Reddit平台格式
+
+        OASIS 的 generate_reddit_agent_graph 会读取以下字段，缺失任何一个都会
+        KeyError：persona, mbti, gender, age, country, username, bio。所以这些
+        必须始终存在，即使 LLM 没有返回值也要给出合理默认值。
+        """
         profile = {
             "user_id": self.user_id,
             "username": self.user_name,  # OASIS 库要求字段名为 username（无下划线）
@@ -77,17 +82,13 @@ class OasisAgentProfile:
             "persona": self.persona,
             "karma": self.karma,
             "created_at": self.created_at,
-            # OASIS 的 generate_reddit_agent_graph 直接读取 mbti 字段，缺失会 KeyError
             "mbti": self.mbti or random.choice(MBTI_TYPES),
+            "gender": self.gender or "other",
+            "age": self.age if self.age is not None else 30,
+            "country": self.country or "中国",
         }
 
         # 添加额外人设信息（如果有）
-        if self.age:
-            profile["age"] = self.age
-        if self.gender:
-            profile["gender"] = self.gender
-        if self.country:
-            profile["country"] = self.country
         if self.profession:
             profile["profession"] = self.profession
         if self.interested_topics:

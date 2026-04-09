@@ -607,6 +607,53 @@ def load_config(config_path: str) -> Dict[str, Any]:
         return json.load(f)
 
 
+# OASIS 的 generate_reddit_agent_graph 强制要求每个 profile 都包含这些字段，
+# 否则 process_agent 会 KeyError。LLM 生成的 profile 经常缺字段，所以在
+# 交给 OASIS 之前先打补丁。
+_REDDIT_REQUIRED_DEFAULTS = {
+    "mbti": "ISTJ",
+    "gender": "other",
+    "age": 30,
+    "country": "中国",
+    "persona": "",
+    "bio": "",
+    "username": "",
+}
+
+
+def _patch_reddit_profile_defaults(profile_path: str, log_fn=print) -> None:
+    """读取 reddit_profiles.json，给每个 profile 补齐 OASIS 必需字段，写回原文件。
+
+    幂等：如果所有字段都已存在则不修改文件。
+    """
+    try:
+        with open(profile_path, 'r', encoding='utf-8') as f:
+            profiles = json.load(f)
+    except Exception as e:
+        log_fn(f"无法读取 profile 文件用于补丁: {e}")
+        return
+
+    if not isinstance(profiles, list):
+        return
+
+    patched = 0
+    for profile in profiles:
+        if not isinstance(profile, dict):
+            continue
+        for key, default in _REDDIT_REQUIRED_DEFAULTS.items():
+            if key not in profile or profile[key] is None:
+                profile[key] = default
+                patched += 1
+
+    if patched > 0:
+        try:
+            with open(profile_path, 'w', encoding='utf-8') as f:
+                json.dump(profiles, f, ensure_ascii=False, indent=2)
+            log_fn(f"已为 reddit_profiles.json 补齐 {patched} 个缺失字段")
+        except Exception as e:
+            log_fn(f"写回 profile 文件失败: {e}")
+
+
 # 需要过滤掉的非核心动作类型（这些动作对分析价值较低）
 FILTERED_ACTIONS = {'refresh', 'sign_up'}
 
@@ -1325,7 +1372,12 @@ async def run_reddit_simulation(
     if not os.path.exists(profile_path):
         log_info(f"错误: Profile文件不存在: {profile_path}")
         return result
-    
+
+    # OASIS 的 generate_reddit_agent_graph 直接读取 mbti/gender/age/country 字段，
+    # 任何一个缺失都会 KeyError。为了兼容旧的 profile 文件（在生成器修复之前生成的），
+    # 在交给 OASIS 之前先把缺失字段补齐并写回。
+    _patch_reddit_profile_defaults(profile_path, log_info)
+
     result.agent_graph = await generate_reddit_agent_graph(
         profile_path=profile_path,
         model=model,

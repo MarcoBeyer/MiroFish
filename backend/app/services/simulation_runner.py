@@ -775,7 +775,7 @@ class SimulationRunner:
         if not state:
             raise ValueError(f"模拟不存在: {simulation_id}")
         
-        if state.runner_status not in [RunnerStatus.RUNNING, RunnerStatus.PAUSED]:
+        if state.runner_status not in [RunnerStatus.RUNNING, RunnerStatus.PAUSED, RunnerStatus.STARTING]:
             raise ValueError(f"模拟未在运行: {simulation_id}, status={state.runner_status}")
         
         state.runner_status = RunnerStatus.STOPPING

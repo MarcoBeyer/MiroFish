@@ -25,6 +25,16 @@ from .zep_entity_reader import EntityNode, ZepEntityReader
 logger = get_logger('mirofish.oasis_profile')
 
 
+# MBTI types — module-level so OasisAgentProfile can pick a fallback when
+# the LLM-generated profile omits the field (OASIS requires mbti to be present)
+MBTI_TYPES = [
+    "INTJ", "INTP", "ENTJ", "ENTP",
+    "INFJ", "INFP", "ENFJ", "ENFP",
+    "ISTJ", "ISFJ", "ESTJ", "ESFJ",
+    "ISTP", "ISFP", "ESTP", "ESFP",
+]
+
+
 @dataclass
 class OasisAgentProfile:
     """OASIS Agent Profile数据结构"""
@@ -67,22 +77,22 @@ class OasisAgentProfile:
             "persona": self.persona,
             "karma": self.karma,
             "created_at": self.created_at,
+            # OASIS 的 generate_reddit_agent_graph 直接读取 mbti 字段，缺失会 KeyError
+            "mbti": self.mbti or random.choice(MBTI_TYPES),
         }
-        
+
         # 添加额外人设信息（如果有）
         if self.age:
             profile["age"] = self.age
         if self.gender:
             profile["gender"] = self.gender
-        if self.mbti:
-            profile["mbti"] = self.mbti
         if self.country:
             profile["country"] = self.country
         if self.profession:
             profile["profession"] = self.profession
         if self.interested_topics:
             profile["interested_topics"] = self.interested_topics
-        
+
         return profile
     
     def to_twitter_format(self) -> Dict[str, Any]:
@@ -97,15 +107,15 @@ class OasisAgentProfile:
             "follower_count": self.follower_count,
             "statuses_count": self.statuses_count,
             "created_at": self.created_at,
+            # OASIS 的 generate_twitter_agent_graph 也读取 mbti 字段
+            "mbti": self.mbti or random.choice(MBTI_TYPES),
         }
-        
+
         # 添加额外人设信息
         if self.age:
             profile["age"] = self.age
         if self.gender:
             profile["gender"] = self.gender
-        if self.mbti:
-            profile["mbti"] = self.mbti
         if self.country:
             profile["country"] = self.country
         if self.profession:
@@ -151,13 +161,8 @@ class OasisProfileGenerator:
     3. 区分个人实体和抽象群体实体
     """
     
-    # MBTI类型列表
-    MBTI_TYPES = [
-        "INTJ", "INTP", "ENTJ", "ENTP",
-        "INFJ", "INFP", "ENFJ", "ENFP",
-        "ISTJ", "ISFJ", "ESTJ", "ESFJ",
-        "ISTP", "ISFP", "ESTP", "ESFP"
-    ]
+    # MBTI类型列表（指向模块级常量，方便外部通过类访问）
+    MBTI_TYPES = MBTI_TYPES
     
     # 常见国家列表
     COUNTRIES = [

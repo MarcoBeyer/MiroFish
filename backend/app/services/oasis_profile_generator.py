@@ -20,6 +20,7 @@ from openai import OpenAI
 from ..config import Config
 from ..utils.graphiti_client import get_graphiti, run_async
 from ..utils.logger import get_logger
+from ..utils.locale import get_language_instruction, get_locale, set_locale, t
 from .zep_entity_reader import EntityNode, ZepEntityReader
 
 logger = get_logger('mirofish.oasis_profile')
@@ -316,7 +317,7 @@ class OasisProfileGenerator:
             logger.debug(f"跳过Zep检索：未设置graph_id")
             return results
         
-        comprehensive_query = f"关于{entity_name}的所有信息、活动、事件、关系和背景"
+        comprehensive_query = t('progress.zepSearchQuery', name=entity_name)
         
         def search_graphiti():
             """Search via Graphiti (edges) with retry."""
@@ -623,8 +624,8 @@ class OasisProfileGenerator:
     
     def _get_system_prompt(self, is_individual: bool) -> str:
         """获取系统提示词"""
-        base_prompt = "你是社交媒体用户画像生成专家。生成详细、真实的人设用于舆论模拟,最大程度还原已有现实情况。必须返回有效的JSON格式，所有字符串值不能包含未转义的换行符。使用中文。"
-        return base_prompt
+        base_prompt = "你是社交媒体用户画像生成专家。生成详细、真实的人设用于舆论模拟,最大程度还原已有现实情况。必须返回有效的JSON格式，所有字符串值不能包含未转义的换行符。"
+        return f"{base_prompt}\n\n{get_language_instruction()}"
     
     def _build_individual_persona_prompt(
         self,
@@ -670,7 +671,7 @@ class OasisProfileGenerator:
 重要:
 - 所有字段值必须是字符串或数字，不要使用换行符
 - persona必须是一段连贯的文字描述
-- 使用中文（除了gender字段必须用英文male/female）
+- {get_language_instruction()} (gender字段必须用英文male/female)
 - 内容要与实体信息保持一致
 - age必须是有效的整数，gender必须是"male"或"female"
 """
@@ -719,7 +720,7 @@ class OasisProfileGenerator:
 重要:
 - 所有字段值必须是字符串或数字，不允许null值
 - persona必须是一段连贯的文字描述，不要使用换行符
-- 使用中文（除了gender字段必须用英文"other"）
+- {get_language_instruction()} (gender字段必须用英文"other")
 - age必须是整数30，gender必须是字符串"other"
 - 机构账号发言要符合其身份定位"""
     
@@ -868,8 +869,12 @@ class OasisProfileGenerator:
                 except Exception as e:
                     logger.warning(f"实时保存 profiles 失败: {e}")
         
+        # Capture locale before spawning thread pool workers
+        current_locale = get_locale()
+
         def generate_single_profile(idx: int, entity: EntityNode) -> tuple:
             """生成单个profile的工作函数"""
+            set_locale(current_locale)
             entity_type = entity.get_entity_type() or "Entity"
             
             try:
@@ -970,7 +975,7 @@ class OasisProfileGenerator:
         
         output_lines = [
             f"\n{separator}",
-            f"[已生成] {entity_name} ({entity_type})",
+            t('progress.profileGenerated', name=entity_name, type=entity_type),
             f"{separator}",
             f"用户名: {profile.user_name}",
             f"",

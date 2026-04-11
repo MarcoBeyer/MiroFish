@@ -17,6 +17,7 @@ from ..config import Config
 from ..utils.logger import get_logger
 from ..utils.llm_client import LLMClient
 from ..utils.graphiti_client import get_graphiti, run_async
+from ..utils.locale import get_locale, t
 from ..utils.zep_paging import fetch_all_nodes, fetch_all_edges
 
 logger = get_logger('mirofish.zep_tools')
@@ -447,13 +448,12 @@ class ZepToolsService:
                 last_exception = e
                 if attempt < max_retries - 1:
                     logger.warning(
-                        f"Zep {operation_name} 第 {attempt + 1} 次尝试失败: {str(e)[:100]}, "
-                        f"{delay:.1f}秒后重试..."
+                        t("console.zepRetryAttempt", operation=operation_name, attempt=attempt + 1, error=str(e)[:100], delay=f"{delay:.1f}")
                     )
                     time.sleep(delay)
                     delay *= 2
                 else:
-                    logger.error(f"Zep {operation_name} 在 {max_retries} 次尝试后仍失败: {str(e)}")
+                    logger.error(t("console.zepAllRetriesFailed", operation=operation_name, retries=max_retries, error=str(e)))
         
         raise last_exception
     
@@ -479,7 +479,7 @@ class ZepToolsService:
         Returns:
             SearchResult: 搜索结果
         """
-        logger.info(f"图谱搜索: graph_id={graph_id}, query={query[:50]}...")
+        logger.info(t("console.graphSearch", graphId=graph_id, query=query[:50]))
         
         # 使用 Graphiti 语义搜索
         try:
@@ -491,7 +491,7 @@ class ZepToolsService:
                         num_results=limit,
                     )
                 ),
-                operation_name=f"图谱搜索(graph={graph_id})"
+                operation_name=t("console.graphSearchOp", graphId=graph_id)
             )
 
             facts = []
@@ -514,6 +514,7 @@ class ZepToolsService:
 
             logger.info(f"搜索完成: 找到 {len(facts)} 条相关事实")
 
+
             return SearchResult(
                 facts=facts,
                 edges=edges,
@@ -523,7 +524,7 @@ class ZepToolsService:
             )
             
         except Exception as e:
-            logger.warning(f"Zep Search API失败，降级为本地搜索: {str(e)}")
+            logger.warning(t("console.zepSearchApiFallback", error=str(e)))
             # 降级：使用本地关键词匹配搜索
             return self._local_search(graph_id, query, limit, scope)
     
@@ -548,7 +549,7 @@ class ZepToolsService:
         Returns:
             SearchResult: 搜索结果
         """
-        logger.info(f"使用本地搜索: query={query[:30]}...")
+        logger.info(t("console.usingLocalSearch", query=query[:30]))
         
         facts = []
         edges_result = []
@@ -618,10 +619,10 @@ class ZepToolsService:
                     if node.summary:
                         facts.append(f"[{node.name}]: {node.summary}")
             
-            logger.info(f"本地搜索完成: 找到 {len(facts)} 条相关事实")
+            logger.info(t("console.localSearchComplete", count=len(facts)))
             
         except Exception as e:
-            logger.error(f"本地搜索失败: {str(e)}")
+            logger.error(t("console.localSearchFailed", error=str(e)))
         
         return SearchResult(
             facts=facts,
@@ -641,7 +642,7 @@ class ZepToolsService:
         Returns:
             节点列表
         """
-        logger.info(f"获取图谱 {graph_id} 的所有节点...")
+        logger.info(t("console.fetchingAllNodes", graphId=graph_id))
 
         raw_nodes = fetch_all_nodes(self.graphiti, graph_id)
 
@@ -656,7 +657,7 @@ class ZepToolsService:
                 attributes=n.get("attributes", {})
             ))
 
-        logger.info(f"获取到 {len(result)} 个节点")
+        logger.info(t("console.fetchedNodes", count=len(result)))
         return result
 
     def get_all_edges(self, graph_id: str, include_temporal: bool = True) -> List[EdgeInfo]:
@@ -670,7 +671,7 @@ class ZepToolsService:
         Returns:
             边列表（包含created_at, valid_at, invalid_at, expired_at）
         """
-        logger.info(f"获取图谱 {graph_id} 的所有边...")
+        logger.info(t("console.fetchingAllEdges", graphId=graph_id))
 
         raw_edges = fetch_all_edges(self.graphiti, graph_id)
 
@@ -705,7 +706,7 @@ class ZepToolsService:
 
             result.append(edge_info)
 
-        logger.info(f"获取到 {len(result)} 条边")
+        logger.info(t("console.fetchedEdges", count=len(result)))
         return result
     
     def get_node_detail(self, node_uuid: str) -> Optional[NodeInfo]:
@@ -718,7 +719,7 @@ class ZepToolsService:
         Returns:
             节点信息或None
         """
-        logger.info(f"获取节点详情: {node_uuid[:8]}...")
+        logger.info(t("console.fetchingNodeDetail", uuid=node_uuid[:8]))
         
         try:
             async def _get():
@@ -746,7 +747,7 @@ class ZepToolsService:
                 attributes=n.get("attributes", {})
             )
         except Exception as e:
-            logger.error(f"获取节点详情失败: {str(e)}")
+            logger.error(t("console.fetchNodeDetailFailed", error=str(e)))
             return None
     
     def get_node_edges(self, graph_id: str, node_uuid: str) -> List[EdgeInfo]:
@@ -762,7 +763,7 @@ class ZepToolsService:
         Returns:
             边列表
         """
-        logger.info(f"获取节点 {node_uuid[:8]}... 的相关边")
+        logger.info(t("console.fetchingNodeEdges", uuid=node_uuid[:8]))
         
         try:
             # 获取图谱所有边，然后过滤
@@ -774,11 +775,11 @@ class ZepToolsService:
                 if edge.source_node_uuid == node_uuid or edge.target_node_uuid == node_uuid:
                     result.append(edge)
             
-            logger.info(f"找到 {len(result)} 条与节点相关的边")
+            logger.info(t("console.foundNodeEdges", count=len(result)))
             return result
             
         except Exception as e:
-            logger.warning(f"获取节点边失败: {str(e)}")
+            logger.warning(t("console.fetchNodeEdgesFailed", error=str(e)))
             return []
     
     def get_entities_by_type(
@@ -796,7 +797,7 @@ class ZepToolsService:
         Returns:
             符合类型的实体列表
         """
-        logger.info(f"获取类型为 {entity_type} 的实体...")
+        logger.info(t("console.fetchingEntitiesByType", type=entity_type))
         
         all_nodes = self.get_all_nodes(graph_id)
         
@@ -806,7 +807,7 @@ class ZepToolsService:
             if entity_type in node.labels:
                 filtered.append(node)
         
-        logger.info(f"找到 {len(filtered)} 个 {entity_type} 类型的实体")
+        logger.info(t("console.foundEntitiesByType", count=len(filtered), type=entity_type))
         return filtered
     
     def get_entity_summary(
@@ -826,7 +827,7 @@ class ZepToolsService:
         Returns:
             实体摘要信息
         """
-        logger.info(f"获取实体 {entity_name} 的关系摘要...")
+        logger.info(t("console.fetchingEntitySummary", name=entity_name))
         
         # 先搜索该实体相关的信息
         search_result = self.search_graph(
@@ -866,7 +867,7 @@ class ZepToolsService:
         Returns:
             统计信息
         """
-        logger.info(f"获取图谱 {graph_id} 的统计信息...")
+        logger.info(t("console.fetchingGraphStats", graphId=graph_id))
         
         nodes = self.get_all_nodes(graph_id)
         edges = self.get_all_edges(graph_id)
@@ -910,7 +911,7 @@ class ZepToolsService:
         Returns:
             模拟上下文信息
         """
-        logger.info(f"获取模拟上下文: {simulation_requirement[:50]}...")
+        logger.info(t("console.fetchingSimContext", requirement=simulation_requirement[:50]))
         
         # 搜索与模拟需求相关的信息
         search_result = self.search_graph(
@@ -974,7 +975,7 @@ class ZepToolsService:
         Returns:
             InsightForgeResult: 深度洞察检索结果
         """
-        logger.info(f"InsightForge 深度洞察检索: {query[:50]}...")
+        logger.info(t("console.insightForgeStart", query=query[:50]))
         
         result = InsightForgeResult(
             query=query,
@@ -990,7 +991,7 @@ class ZepToolsService:
             max_queries=max_sub_queries
         )
         result.sub_queries = sub_queries
-        logger.info(f"生成 {len(sub_queries)} 个子问题")
+        logger.info(t("console.generatedSubQueries", count=len(sub_queries)))
         
         # Step 2: 对每个子问题进行语义搜索
         all_facts = []
@@ -1090,7 +1091,7 @@ class ZepToolsService:
         result.relationship_chains = relationship_chains
         result.total_relationships = len(relationship_chains)
         
-        logger.info(f"InsightForge完成: {result.total_facts}条事实, {result.total_entities}个实体, {result.total_relationships}条关系")
+        logger.info(t("console.insightForgeComplete", facts=result.total_facts, entities=result.total_entities, relationships=result.total_relationships))
         return result
     
     def _generate_sub_queries(
@@ -1137,7 +1138,7 @@ class ZepToolsService:
             return [str(sq) for sq in sub_queries[:max_queries]]
             
         except Exception as e:
-            logger.warning(f"生成子问题失败: {str(e)}，使用默认子问题")
+            logger.warning(t("console.generateSubQueriesFailed", error=str(e)))
             # 降级：返回基于原问题的变体
             return [
                 query,
@@ -1172,7 +1173,7 @@ class ZepToolsService:
         Returns:
             PanoramaResult: 广度搜索结果
         """
-        logger.info(f"PanoramaSearch 广度搜索: {query[:50]}...")
+        logger.info(t("console.panoramaSearchStart", query=query[:50]))
         
         result = PanoramaResult(query=query)
         
@@ -1235,7 +1236,7 @@ class ZepToolsService:
         result.active_count = len(active_facts)
         result.historical_count = len(historical_facts)
         
-        logger.info(f"PanoramaSearch完成: {result.active_count}条有效, {result.historical_count}条历史")
+        logger.info(t("console.panoramaSearchComplete", active=result.active_count, historical=result.historical_count))
         return result
     
     def quick_search(
@@ -1260,7 +1261,7 @@ class ZepToolsService:
         Returns:
             SearchResult: 搜索结果
         """
-        logger.info(f"QuickSearch 简单搜索: {query[:50]}...")
+        logger.info(t("console.quickSearchStart", query=query[:50]))
         
         # 直接调用现有的search_graph方法
         result = self.search_graph(
@@ -1270,7 +1271,7 @@ class ZepToolsService:
             scope="edges"
         )
         
-        logger.info(f"QuickSearch完成: {result.total_count}条结果")
+        logger.info(t("console.quickSearchComplete", count=result.total_count))
         return result
     
     def interview_agents(
@@ -1310,7 +1311,7 @@ class ZepToolsService:
         """
         from .simulation_runner import SimulationRunner
         
-        logger.info(f"InterviewAgents 深度采访（真实API）: {interview_requirement[:50]}...")
+        logger.info(t("console.interviewAgentsStart", requirement=interview_requirement[:50]))
         
         result = InterviewResult(
             interview_topic=interview_requirement,
@@ -1321,12 +1322,12 @@ class ZepToolsService:
         profiles = self._load_agent_profiles(simulation_id)
         
         if not profiles:
-            logger.warning(f"未找到模拟 {simulation_id} 的人设文件")
+            logger.warning(t("console.profilesNotFound", simId=simulation_id))
             result.summary = "未找到可采访的Agent人设文件"
             return result
         
         result.total_agents = len(profiles)
-        logger.info(f"加载到 {len(profiles)} 个Agent人设")
+        logger.info(t("console.loadedProfiles", count=len(profiles)))
         
         # Step 2: 使用LLM选择要采访的Agent（返回agent_id列表）
         selected_agents, selected_indices, selection_reasoning = self._select_agents_for_interview(
@@ -1338,7 +1339,7 @@ class ZepToolsService:
         
         result.selected_agents = selected_agents
         result.selection_reasoning = selection_reasoning
-        logger.info(f"选择了 {len(selected_agents)} 个Agent进行采访: {selected_indices}")
+        logger.info(t("console.selectedAgentsForInterview", count=len(selected_agents), indices=selected_indices))
         
         # Step 3: 生成采访问题（如果没有提供）
         if not result.interview_questions:
@@ -1347,7 +1348,7 @@ class ZepToolsService:
                 simulation_requirement=simulation_requirement,
                 selected_agents=selected_agents
             )
-            logger.info(f"生成了 {len(result.interview_questions)} 个采访问题")
+            logger.info(t("console.generatedInterviewQuestions", count=len(result.interview_questions)))
         
         # 将问题合并为一个采访prompt
         combined_prompt = "\n".join([f"{i+1}. {q}" for i, q in enumerate(result.interview_questions)])
@@ -1377,7 +1378,7 @@ class ZepToolsService:
                     # 不指定platform，API会在twitter和reddit两个平台都采访
                 })
             
-            logger.info(f"调用批量采访API（双平台）: {len(interviews_request)} 个Agent")
+            logger.info(t("console.callingBatchInterviewApi", count=len(interviews_request)))
             
             # 调用 SimulationRunner 的批量采访方法（不传platform，双平台采访）
             api_result = SimulationRunner.interview_agents_batch(
@@ -1387,12 +1388,12 @@ class ZepToolsService:
                 timeout=180.0   # 双平台需要更长超时
             )
             
-            logger.info(f"采访API返回: {api_result.get('interviews_count', 0)} 个结果, success={api_result.get('success')}")
+            logger.info(t("console.interviewApiReturned", count=api_result.get('interviews_count', 0), success=api_result.get('success')))
             
             # 检查API调用是否成功
             if not api_result.get("success", False):
                 error_msg = api_result.get("error", "未知错误")
-                logger.warning(f"采访API返回失败: {error_msg}")
+                logger.warning(t("console.interviewApiReturnedFailure", error=error_msg))
                 result.summary = f"采访API调用失败：{error_msg}。请检查OASIS模拟环境状态。"
                 return result
             
@@ -1465,11 +1466,11 @@ class ZepToolsService:
             
         except ValueError as e:
             # 模拟环境未运行
-            logger.warning(f"采访API调用失败（环境未运行？）: {e}")
+            logger.warning(t("console.interviewApiCallFailed", error=e))
             result.summary = f"采访失败：{str(e)}。模拟环境可能已关闭，请确保OASIS环境正在运行。"
             return result
         except Exception as e:
-            logger.error(f"采访API调用异常: {e}")
+            logger.error(t("console.interviewApiCallException", error=e))
             import traceback
             logger.error(traceback.format_exc())
             result.summary = f"采访过程发生错误：{str(e)}"
@@ -1482,7 +1483,7 @@ class ZepToolsService:
                 interview_requirement=interview_requirement
             )
         
-        logger.info(f"InterviewAgents完成: 采访了 {result.interviewed_count} 个Agent（双平台）")
+        logger.info(t("console.interviewAgentsComplete", count=result.interviewed_count))
         return result
     
     @staticmethod
@@ -1525,10 +1526,10 @@ class ZepToolsService:
             try:
                 with open(reddit_profile_path, 'r', encoding='utf-8') as f:
                     profiles = json.load(f)
-                logger.info(f"从 reddit_profiles.json 加载了 {len(profiles)} 个人设")
+                logger.info(t("console.loadedRedditProfiles", count=len(profiles)))
                 return profiles
             except Exception as e:
-                logger.warning(f"读取 reddit_profiles.json 失败: {e}")
+                logger.warning(t("console.readRedditProfilesFailed", error=e))
         
         # 尝试读取Twitter CSV格式
         twitter_profile_path = os.path.join(sim_dir, "twitter_profiles.csv")
@@ -1545,10 +1546,10 @@ class ZepToolsService:
                             "persona": row.get("user_char", ""),
                             "profession": "未知"
                         })
-                logger.info(f"从 twitter_profiles.csv 加载了 {len(profiles)} 个人设")
+                logger.info(t("console.loadedTwitterProfiles", count=len(profiles)))
                 return profiles
             except Exception as e:
-                logger.warning(f"读取 twitter_profiles.csv 失败: {e}")
+                logger.warning(t("console.readTwitterProfilesFailed", error=e))
         
         return profiles
     
@@ -1629,7 +1630,7 @@ class ZepToolsService:
             return selected_agents, valid_indices, reasoning
             
         except Exception as e:
-            logger.warning(f"LLM选择Agent失败，使用默认选择: {e}")
+            logger.warning(t("console.llmSelectAgentFailed", error=e))
             # 降级：选择前N个
             selected = profiles[:max_agents]
             indices = list(range(min(max_agents, len(profiles))))
@@ -1677,7 +1678,7 @@ class ZepToolsService:
             return response.get("questions", [f"关于{interview_requirement}，您有什么看法？"])
             
         except Exception as e:
-            logger.warning(f"生成采访问题失败: {e}")
+            logger.warning(t("console.generateInterviewQuestionsFailed", error=e))
             return [
                 f"关于{interview_requirement}，您的观点是什么？",
                 "这件事对您或您所代表的群体有什么影响？",
@@ -1699,7 +1700,8 @@ class ZepToolsService:
         for interview in interviews:
             interview_texts.append(f"【{interview.agent_name}（{interview.agent_role}）】\n{interview.response[:500]}")
         
-        system_prompt = """你是一个专业的新闻编辑。请根据多位受访者的回答，生成一份采访摘要。
+        quote_instruction = "引用受访者原话时使用中文引号「」" if get_locale() == 'zh' else 'Use quotation marks "" when quoting interviewees'
+        system_prompt = f"""你是一个专业的新闻编辑。请根据多位受访者的回答，生成一份采访摘要。
 
 摘要要求：
 1. 提炼各方主要观点
@@ -1712,7 +1714,7 @@ class ZepToolsService:
 - 使用纯文本段落，用空行分隔不同部分
 - 不要使用Markdown标题（如#、##、###）
 - 不要使用分割线（如---、***）
-- 引用受访者原话时使用中文引号「」
+- {quote_instruction}
 - 可以使用**加粗**标记关键词，但不要使用其他Markdown语法"""
 
         user_prompt = f"""采访主题：{interview_requirement}
@@ -1734,6 +1736,6 @@ class ZepToolsService:
             return summary
             
         except Exception as e:
-            logger.warning(f"生成采访摘要失败: {e}")
+            logger.warning(t("console.generateInterviewSummaryFailed", error=e))
             # 降级：简单拼接
             return f"共采访了{len(interviews)}位受访者，包括：" + "、".join([i.agent_name for i in interviews])

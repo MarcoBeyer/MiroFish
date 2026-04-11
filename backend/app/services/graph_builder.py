@@ -15,6 +15,7 @@ from ..models.task import TaskManager, TaskStatus
 from ..utils.graphiti_client import get_graphiti, run_async
 from ..utils.zep_paging import fetch_all_nodes, fetch_all_edges
 from .text_processor import TextProcessor
+from ..utils.locale import t
 
 
 @dataclass
@@ -152,7 +153,7 @@ class GraphBuilderService:
                 task_id,
                 status=TaskStatus.PROCESSING,
                 progress=5,
-                message="开始构建图谱..."
+                message=t('progress.startBuildingGraph')
             )
 
             # 1. 创建图谱 (just generates a group_id)
@@ -160,7 +161,7 @@ class GraphBuilderService:
             self.task_manager.update_task(
                 task_id,
                 progress=10,
-                message=f"图谱已创建: {graph_id}"
+                message=t('progress.graphCreated', graphId=graph_id)
             )
 
             # 2. 解析本体为 Pydantic 模型
@@ -168,7 +169,7 @@ class GraphBuilderService:
             self.task_manager.update_task(
                 task_id,
                 progress=15,
-                message="本体已设置"
+                message=t('progress.ontologySet')
             )
 
             # 3. 文本分块
@@ -177,7 +178,7 @@ class GraphBuilderService:
             self.task_manager.update_task(
                 task_id,
                 progress=20,
-                message=f"文本已分割为 {total_chunks} 个块"
+                message=t('progress.textSplit', count=total_chunks)
             )
 
             # 4. 逐块发送数据 (Graphiti processes inline — no polling needed)
@@ -194,7 +195,7 @@ class GraphBuilderService:
             self.task_manager.update_task(
                 task_id,
                 progress=90,
-                message="获取图谱信息..."
+                message=t('progress.fetchingGraphInfo')
             )
 
             graph_info = self._get_graph_info(graph_id)
@@ -268,6 +269,7 @@ class GraphBuilderService:
                 raise
 
         return episode_names
+
 
     def _get_graph_info(self, graph_id: str) -> GraphInfo:
         """获取图谱信息"""

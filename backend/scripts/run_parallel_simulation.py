@@ -1292,10 +1292,11 @@ async def run_twitter_simulation(
         if action_logger:
             action_logger.log_round_start(round_num + 1, simulated_hour)
         
+        simulated_hours_total = (round_num + 1) * minutes_per_round / 60
         if not active_agents:
             # 没有活跃agent时也记录round结束（actions_count=0）
             if action_logger:
-                action_logger.log_round_end(round_num + 1, 0)
+                action_logger.log_round_end(round_num + 1, 0, simulated_hours=simulated_hours_total)
             continue
         
         actions = {agent: LLMAction() for _, agent in active_agents}
@@ -1322,7 +1323,7 @@ async def run_twitter_simulation(
                 round_action_count += 1
         
         if action_logger:
-            action_logger.log_round_end(round_num + 1, round_action_count)
+            action_logger.log_round_end(round_num + 1, round_action_count, simulated_hours=simulated_hours_total)
         
         if (round_num + 1) % 20 == 0:
             progress = (round_num + 1) / total_rounds * 100
@@ -1499,10 +1500,11 @@ async def run_reddit_simulation(
         if action_logger:
             action_logger.log_round_start(round_num + 1, simulated_hour)
         
+        simulated_hours_total = (round_num + 1) * minutes_per_round / 60
         if not active_agents:
             # 没有活跃agent时也记录round结束（actions_count=0）
             if action_logger:
-                action_logger.log_round_end(round_num + 1, 0)
+                action_logger.log_round_end(round_num + 1, 0, simulated_hours=simulated_hours_total)
             continue
         
         actions = {agent: LLMAction() for _, agent in active_agents}
@@ -1529,7 +1531,7 @@ async def run_reddit_simulation(
                 round_action_count += 1
         
         if action_logger:
-            action_logger.log_round_end(round_num + 1, round_action_count)
+            action_logger.log_round_end(round_num + 1, round_action_count, simulated_hours=simulated_hours_total)
         
         if (round_num + 1) % 20 == 0:
             progress = (round_num + 1) / total_rounds * 100

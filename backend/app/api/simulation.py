@@ -1766,9 +1766,8 @@ def delete_simulation():
 # ============== 日志接口 ==============
 
 @simulation_bp.route('/<simulation_id>/logs', methods=['GET'])
-def get_simulation_logs():
+def get_simulation_logs(simulation_id):
     """返回模拟的 simulation.log 最后 N 行"""
-    simulation_id = request.view_args['simulation_id']
     lines = int(request.args.get('lines', 200))
 
     log_path = os.path.normpath(os.path.join(

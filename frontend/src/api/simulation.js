@@ -177,6 +177,23 @@ export const interviewAgents = (data) => {
 }
 
 /**
+ * 获取模拟日志
+ * @param {string} simulationId
+ * @param {number} lines - 返回最后 N 行
+ */
+export const getSimulationLogs = (simulationId, lines = 200) => {
+  return service.get(`/api/simulation/${simulationId}/logs`, { params: { lines } })
+}
+
+/**
+ * 删除模拟（停止进程 + 删除所有文件）
+ * @param {Object} data - { simulation_id }
+ */
+export const deleteSimulation = (data) => {
+  return service.post('/api/simulation/delete', data)
+}
+
+/**
  * 获取历史模拟列表（带项目详情）
  * 用于首页历史项目展示
  * @param {number} limit - 返回数量限制

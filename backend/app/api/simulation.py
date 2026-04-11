@@ -1704,6 +1704,92 @@ def stop_simulation():
         }), 500
 
 
+# ============== 删除接口 ==============
+
+@simulation_bp.route('/delete', methods=['POST'])
+def delete_simulation():
+    """
+    删除模拟（停止进程 + 删除所有文件）
+
+    请求（JSON）：
+        {
+            "simulation_id": "sim_xxxx"  // 必填
+        }
+    """
+    import shutil
+
+    try:
+        data = request.get_json() or {}
+        simulation_id = data.get('simulation_id')
+        if not simulation_id:
+            return jsonify({"success": False, "error": "请提供 simulation_id"}), 400
+
+        # 1. 停止正在运行的进程（忽略失败）
+        try:
+            SimulationRunner.stop_simulation(simulation_id)
+        except Exception:
+            pass
+
+        # 2. 停止图谱记忆更新器（如果有）
+        try:
+            from ..services.zep_graph_memory_updater import ZepGraphMemoryManager
+            ZepGraphMemoryManager.stop_updater(simulation_id)
+        except Exception:
+            pass
+
+        # 3. 删除磁盘上的模拟目录
+        sim_dir = os.path.join(
+            os.path.dirname(__file__),
+            '../../uploads/simulations',
+            simulation_id
+        )
+        sim_dir = os.path.normpath(sim_dir)
+        if os.path.exists(sim_dir):
+            shutil.rmtree(sim_dir)
+
+        # 4. 从内存缓存中移除
+        manager = SimulationManager()
+        manager._simulations.pop(simulation_id, None)
+
+        logger.info(f"模拟已删除: {simulation_id}")
+        return jsonify({"success": True, "simulation_id": simulation_id})
+
+    except Exception as e:
+        logger.error(f"删除模拟失败: {str(e)}")
+        return jsonify({
+            "success": False,
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }), 500
+
+
+# ============== 日志接口 ==============
+
+@simulation_bp.route('/<simulation_id>/logs', methods=['GET'])
+def get_simulation_logs():
+    """返回模拟的 simulation.log 最后 N 行"""
+    simulation_id = request.view_args['simulation_id']
+    lines = int(request.args.get('lines', 200))
+
+    log_path = os.path.normpath(os.path.join(
+        os.path.dirname(__file__),
+        '../../uploads/simulations',
+        simulation_id,
+        'simulation.log'
+    ))
+
+    if not os.path.exists(log_path):
+        return jsonify({"success": True, "log": "", "message": "日志文件不存在"})
+
+    try:
+        with open(log_path, 'r', encoding='utf-8', errors='replace') as f:
+            all_lines = f.readlines()
+        tail = ''.join(all_lines[-lines:])
+        return jsonify({"success": True, "log": tail, "total_lines": len(all_lines)})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
 # ============== 实时状态监控接口 ==============
 
 @simulation_bp.route('/<simulation_id>/run-status', methods=['GET'])

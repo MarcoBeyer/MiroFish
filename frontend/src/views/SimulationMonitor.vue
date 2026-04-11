@@ -44,6 +44,8 @@
             </button>
           </div>
 
+          <div v-if="statusBadge" class="status-badge">{{ statusBadge }}</div>
+
           <div v-if="runStatus" class="status-grid">
             <div class="stat-item">
               <span class="stat-label">Runner</span>
@@ -220,6 +222,23 @@ const runnerClass = computed(() => {
   if (!s) return ''
   const map = { running: 'status-running', completed: 'status-completed', failed: 'status-failed', starting: 'status-starting', stopped: 'status-stopped' }
   return map[s] || ''
+})
+
+const statusBadge = computed(() => {
+  const s = runStatus.value
+  if (!s || !['running', 'starting', 'completed'].includes(s.runner_status)) return null
+  const tw = s.twitter_running
+  const rd = s.reddit_running
+  let platform = 'Sim'
+  if (tw && rd) platform = 'Community'
+  else if (tw) platform = 'Twitter'
+  else if (rd) platform = 'Reddit'
+  const r = s.current_round || 0
+  const total = s.total_rounds || '?'
+  const simH = s.simulated_hours || 0
+  const dayH = Math.floor(simH) % 24
+  const actions = s.total_actions_count || 0
+  return `[${platform}] R${r}/${total} | T:${dayH}h | A:${actions}`
 })
 
 function statusClass(status) {
@@ -440,6 +459,7 @@ onUnmounted(() => { if (pollTimer) clearInterval(pollTimer) })
 .small-btn:disabled { opacity: 0.4; }
 
 /* Stats */
+.status-badge { font-family: var(--font-mono); font-size: 13px; font-weight: 600; letter-spacing: 0.5px; padding: 6px 12px; background: var(--bg-secondary, #1a1a1a); border: 1px solid var(--border); color: var(--orange); margin-bottom: 14px; display: inline-block; }
 .status-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 10px; }
 .stat-item { display: flex; flex-direction: column; padding: 10px 12px; border: 1px solid var(--border); }
 .stat-label { font-size: 10px; color: var(--gray-text); font-family: var(--font-mono); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; }

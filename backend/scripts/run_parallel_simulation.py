@@ -1203,7 +1203,7 @@ async def run_twitter_simulation(
         agent_graph=result.agent_graph,
         platform=oasis.DefaultPlatformType.TWITTER,
         database_path=db_path,
-        semaphore=int(os.environ.get("OASIS_SEMAPHORE", "30")),  # 限制最大并发 LLM 请求数，防止 API 过载
+        semaphore=int(os.environ.get("OASIS_SEMAPHORE", "8")),  # 限制最大并发 LLM 请求数，防止 API 过载
     )
     
     await result.env.reset()
@@ -1271,7 +1271,8 @@ async def run_twitter_simulation(
             log_info(f"轮数已截断: {original_rounds} -> {total_rounds} (max_rounds={max_rounds})")
     
     start_time = datetime.now()
-    
+    round_delay = float(os.environ.get("OASIS_ROUND_DELAY", "2.0"))  # 每轮结束后等待秒数，让API速率限制窗口恢复
+
     for round_num in range(total_rounds):
         # 检查是否收到退出信号
         if _shutdown_event and _shutdown_event.is_set():
@@ -1299,7 +1300,9 @@ async def run_twitter_simulation(
         
         actions = {agent: LLMAction() for _, agent in active_agents}
         await result.env.step(actions)
-        
+        if round_delay > 0:
+            await asyncio.sleep(round_delay)
+
         # 从数据库获取实际执行的动作并记录
         actual_actions, last_rowid = fetch_new_actions_from_db(
             db_path, last_rowid, agent_names
@@ -1399,7 +1402,7 @@ async def run_reddit_simulation(
         agent_graph=result.agent_graph,
         platform=oasis.DefaultPlatformType.REDDIT,
         database_path=db_path,
-        semaphore=int(os.environ.get("OASIS_SEMAPHORE", "30")),  # 限制最大并发 LLM 请求数，防止 API 过载
+        semaphore=int(os.environ.get("OASIS_SEMAPHORE", "8")),  # 限制最大并发 LLM 请求数，防止 API 过载
     )
     
     await result.env.reset()
@@ -1475,7 +1478,8 @@ async def run_reddit_simulation(
             log_info(f"轮数已截断: {original_rounds} -> {total_rounds} (max_rounds={max_rounds})")
     
     start_time = datetime.now()
-    
+    round_delay = float(os.environ.get("OASIS_ROUND_DELAY", "2.0"))  # 每轮结束后等待秒数，让API速率限制窗口恢复
+
     for round_num in range(total_rounds):
         # 检查是否收到退出信号
         if _shutdown_event and _shutdown_event.is_set():
@@ -1503,7 +1507,9 @@ async def run_reddit_simulation(
         
         actions = {agent: LLMAction() for _, agent in active_agents}
         await result.env.step(actions)
-        
+        if round_delay > 0:
+            await asyncio.sleep(round_delay)
+
         # 从数据库获取实际执行的动作并记录
         actual_actions, last_rowid = fetch_new_actions_from_db(
             db_path, last_rowid, agent_names

@@ -282,7 +282,7 @@ async function fetchLogs() {
   logsLoading.value = true
   try {
     const res = await getSimulationLogs(selectedSim.value.simulation_id, logLines.value)
-    logContent.value = res.data?.log || '(empty)'
+    logContent.value = res.log || res.data?.log || '(empty)'
     await nextTick()
     if (logEl.value) logEl.value.scrollTop = logEl.value.scrollHeight
   } catch (e) {

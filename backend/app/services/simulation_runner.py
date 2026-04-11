@@ -310,13 +310,17 @@ class SimulationRunner:
         cls._run_states[state.simulation_id] = state
     
     @classmethod
-    @classmethod
-    def _get_last_completed_round(cls, simulation_id: str) -> int:
-        """Read actions.jsonl files and return the highest completed round number."""
+    def _get_last_completed_round(cls, simulation_id: str, platform: str = 'parallel') -> int:
+        """Read actions.jsonl files and return the highest completed round number.
+
+        When platform is 'twitter' or 'reddit', only reads that platform's log.
+        When platform is 'parallel', reads both and returns the max across both.
+        """
         sim_dir = os.path.join(cls.RUN_STATE_DIR, simulation_id)
+        platforms = ('twitter', 'reddit') if platform == 'parallel' else (platform,)
         max_round = 0
-        for platform in ('twitter', 'reddit'):
-            log_path = os.path.join(sim_dir, platform, 'actions.jsonl')
+        for plat in platforms:
+            log_path = os.path.join(sim_dir, plat, 'actions.jsonl')
             if not os.path.exists(log_path):
                 continue
             try:
@@ -464,10 +468,10 @@ class SimulationRunner:
 
             # 续跑：从上次中断的轮次继续
             if resume:
-                start_round = cls._get_last_completed_round(simulation_id)
+                start_round = cls._get_last_completed_round(simulation_id, platform=platform)
                 if start_round > 0:
                     cmd.extend(["--start-round", str(start_round)])
-                    logger.info(f"续跑模式: simulation_id={simulation_id}, start_round={start_round}")
+                    logger.info(f"续跑模式: simulation_id={simulation_id}, platform={platform}, start_round={start_round}")
 
             # 创建主日志文件，避免 stdout/stderr 管道缓冲区满导致进程阻塞
             main_log_path = os.path.join(sim_dir, "simulation.log")

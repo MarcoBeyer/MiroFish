@@ -528,11 +528,12 @@ class TwitterSimulationRunner:
         
         return active_agents
     
-    async def run(self, max_rounds: int = None):
+    async def run(self, max_rounds: int = None, start_round: int = 0):
         """运行Twitter模拟
-        
+
         Args:
             max_rounds: 最大模拟轮数（可选，用于截断过长的模拟）
+            start_round: 从指定轮次开始（续跑模式，默认0表示从头开始）
         """
         print("=" * 60)
         print("OASIS Twitter模拟")
@@ -582,10 +583,13 @@ class TwitterSimulationRunner:
         )
         
         # 数据库路径
+        resuming = start_round > 0
         db_path = self._get_db_path()
-        if os.path.exists(db_path):
+        if not resuming and os.path.exists(db_path):
             os.remove(db_path)
             print(f"已删除旧数据库: {db_path}")
+        elif resuming:
+            print(f"续跑模式: 从第 {start_round} 轮开始，保留现有数据库")
         
         # 创建环境
         print("创建OASIS环境...")
@@ -603,9 +607,9 @@ class TwitterSimulationRunner:
         self.ipc_handler = IPCHandler(self.simulation_dir, self.env, self.agent_graph)
         self.ipc_handler.update_status("running")
         
-        # 执行初始事件
+        # 执行初始事件（续跑时跳过，避免重复发帖）
         event_config = self.config.get("event_config", {})
-        initial_posts = event_config.get("initial_posts", [])
+        initial_posts = [] if resuming else event_config.get("initial_posts", [])
         
         if initial_posts:
             print(f"执行初始事件 ({len(initial_posts)}条初始帖子)...")
@@ -630,7 +634,7 @@ class TwitterSimulationRunner:
         print("\n开始模拟循环...")
         start_time = datetime.now()
         
-        for round_num in range(total_rounds):
+        for round_num in range(start_round, total_rounds):
             # 计算当前模拟时间
             simulated_minutes = round_num * minutes_per_round
             simulated_hour = (simulated_minutes // 60) % 24
@@ -719,12 +723,18 @@ async def main():
         help='最大模拟轮数（可选，用于截断过长的模拟）'
     )
     parser.add_argument(
+        '--start-round',
+        type=int,
+        default=0,
+        help='从指定轮次开始（续跑模式，0表示从头开始）'
+    )
+    parser.add_argument(
         '--no-wait',
         action='store_true',
         default=False,
         help='模拟完成后立即关闭环境，不进入等待命令模式'
     )
-    
+
     args = parser.parse_args()
     
     # 在 main 函数开始时创建 shutdown 事件
@@ -743,7 +753,7 @@ async def main():
         config_path=args.config,
         wait_for_commands=not args.no_wait
     )
-    await runner.run(max_rounds=args.max_rounds)
+    await runner.run(max_rounds=args.max_rounds, start_round=args.start_round)
 
 
 def setup_signal_handlers():

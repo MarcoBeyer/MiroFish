@@ -119,7 +119,26 @@
               :disabled="actionLoading"
               v-if="runStatus && ['failed', 'stopped'].includes(runStatus.runner_status) && (runStatus.current_round || 0) > 0"
             >
-              Resume
+              Resume Both
+            </button>
+            <!-- Per-platform resume: shown when status allows restart AND that platform is behind -->
+            <button
+              class="action-btn resume-twitter"
+              @click="handleResumePlatform('twitter')"
+              :disabled="actionLoading"
+              v-if="runStatus && ['failed', 'stopped', 'completed'].includes(runStatus.runner_status) && (runStatus.twitter_current_round || 0) > 0 && (runStatus.twitter_current_round || 0) < (runStatus.total_rounds || 0)"
+              :title="`Resume Twitter from round ${runStatus?.twitter_current_round}`"
+            >
+              Resume Twitter (R{{ runStatus?.twitter_current_round }}/{{ runStatus?.total_rounds }})
+            </button>
+            <button
+              class="action-btn resume-reddit"
+              @click="handleResumePlatform('reddit')"
+              :disabled="actionLoading"
+              v-if="runStatus && ['failed', 'stopped', 'completed'].includes(runStatus.runner_status) && (runStatus.reddit_current_round || 0) > 0 && (runStatus.reddit_current_round || 0) < (runStatus.total_rounds || 0)"
+              :title="`Resume Reddit from round ${runStatus?.reddit_current_round}`"
+            >
+              Resume Reddit (R{{ runStatus?.reddit_current_round }}/{{ runStatus?.total_rounds }})
             </button>
             <button
               class="action-btn delete"
@@ -367,6 +386,30 @@ async function handleResume() {
   }
 }
 
+async function handleResumePlatform(platform) {
+  actionLoading.value = true
+  actionMessage.value = ''
+  const fromRound = platform === 'twitter'
+    ? runStatus.value?.twitter_current_round
+    : runStatus.value?.reddit_current_round
+  try {
+    await startSimulation({
+      simulation_id: selectedSim.value.simulation_id,
+      platform,
+      resume: true,
+      enable_graph_memory_update: true
+    })
+    actionMessage.value = `Resuming ${platform} from round ${fromRound || 0}...`
+    actionMessageClass.value = 'success'
+    await fetchRunStatus()
+  } catch (e) {
+    actionMessage.value = e.response?.data?.error || e.message || `Resume ${platform} failed`
+    actionMessageClass.value = 'error'
+  } finally {
+    actionLoading.value = false
+  }
+}
+
 function handleDelete() {
   showDeleteConfirm.value = true
 }
@@ -511,6 +554,10 @@ onUnmounted(() => { if (pollTimer) clearInterval(pollTimer) })
 .action-btn.start:hover:not(:disabled) { opacity: 0.8; }
 .action-btn.resume { background: transparent; border: 1px solid var(--orange); color: var(--orange); }
 .action-btn.resume:hover:not(:disabled) { background: var(--orange); color: white; }
+.action-btn.resume-twitter { background: transparent; border: 1px solid #005fa3; color: #005fa3; font-size: 11px; }
+.action-btn.resume-twitter:hover:not(:disabled) { background: #005fa3; color: white; }
+.action-btn.resume-reddit { background: transparent; border: 1px solid #b83600; color: #b83600; font-size: 11px; }
+.action-btn.resume-reddit:hover:not(:disabled) { background: #b83600; color: white; }
 .action-btn.delete { background: transparent; border: 1px solid #ef4444; color: #ef4444; }
 .action-btn.delete:hover:not(:disabled) { background: #ef4444; color: white; }
 

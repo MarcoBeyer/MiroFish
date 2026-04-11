@@ -315,7 +315,8 @@ class SimulationRunner:
         platform: str = "parallel",  # twitter / reddit / parallel
         max_rounds: int = None,  # 最大模拟轮数（可选，用于截断过长的模拟）
         enable_graph_memory_update: bool = False,  # 是否将活动更新到Zep图谱
-        graph_id: str = None  # Zep图谱ID（启用图谱更新时必需）
+        graph_id: str = None,  # Zep图谱ID（启用图谱更新时必需）
+        ontology: dict = None  # 本体定义（约束图谱记忆更新的 edge/entity 类型）
     ) -> SimulationRunState:
         """
         启动模拟
@@ -374,7 +375,7 @@ class SimulationRunner:
                 raise ValueError("启用图谱记忆更新时必须提供 graph_id")
             
             try:
-                ZepGraphMemoryManager.create_updater(simulation_id, graph_id)
+                ZepGraphMemoryManager.create_updater(simulation_id, graph_id, ontology=ontology)
                 cls._graph_memory_enabled[simulation_id] = True
                 logger.info(f"已启用图谱记忆更新: simulation_id={simulation_id}, graph_id={graph_id}")
             except Exception as e:

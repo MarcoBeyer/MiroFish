@@ -15,6 +15,7 @@ from queue import Queue, Empty
 from ..config import Config
 from ..utils.logger import get_logger
 from ..utils.graphiti_client import get_graphiti, run_async
+from .graph_builder import parse_ontology
 
 logger = get_logger('mirofish.zep_graph_memory_updater')
 
@@ -227,16 +228,24 @@ class ZepGraphMemoryUpdater:
     MAX_RETRIES = 3
     RETRY_DELAY = 2  # 秒
     
-    def __init__(self, graph_id: str, api_key: Optional[str] = None):
+    def __init__(self, graph_id: str, api_key: Optional[str] = None, ontology: Optional[Dict[str, Any]] = None):
         """
         初始化更新器
 
         Args:
             graph_id: 图谱 group_id
             api_key: 保留参数，不再使用
+            ontology: 本体定义（可选），传入后 add_episode 会约束 edge/entity 类型
         """
         self.graph_id = graph_id
         self.graphiti = get_graphiti()
+
+        # Parse ontology into Graphiti-compatible Pydantic models
+        self._entity_types = None
+        self._edge_types = None
+        self._edge_type_map = None
+        if ontology:
+            self._entity_types, self._edge_types, self._edge_type_map = parse_ontology(ontology)
         
         # 活动队列
         self._activity_queue: Queue = Queue()
@@ -405,6 +414,14 @@ class ZepGraphMemoryUpdater:
                     source_description=f"MiroFish simulation activity ({platform})",
                     reference_time=datetime.now(timezone.utc),
                     group_id=self.graph_id,
+                    entity_types=self._entity_types,
+                    edge_types=self._edge_types,
+                    edge_type_map=self._edge_type_map,
+                    custom_extraction_instructions=(
+                        "IMPORTANT: You MUST only use relation_type values from the provided FACT_TYPES list. "
+                        "Do NOT invent new relation types. If a relationship does not fit any of the provided "
+                        "types, skip that relationship entirely — do not extract it."
+                    ) if self._edge_types else None,
                 ))
                 
                 self._total_sent += 1
@@ -477,14 +494,15 @@ class ZepGraphMemoryManager:
     _lock = threading.Lock()
     
     @classmethod
-    def create_updater(cls, simulation_id: str, graph_id: str) -> ZepGraphMemoryUpdater:
+    def create_updater(cls, simulation_id: str, graph_id: str, ontology: Optional[Dict[str, Any]] = None) -> ZepGraphMemoryUpdater:
         """
         为模拟创建图谱记忆更新器
-        
+
         Args:
             simulation_id: 模拟ID
             graph_id: Zep图谱ID
-            
+            ontology: 本体定义（可选），约束 edge/entity 类型
+
         Returns:
             ZepGraphMemoryUpdater实例
         """
@@ -492,11 +510,11 @@ class ZepGraphMemoryManager:
             # 如果已存在，先停止旧的
             if simulation_id in cls._updaters:
                 cls._updaters[simulation_id].stop()
-            
-            updater = ZepGraphMemoryUpdater(graph_id)
+
+            updater = ZepGraphMemoryUpdater(graph_id, ontology=ontology)
             updater.start()
             cls._updaters[simulation_id] = updater
-            
+
             logger.info(f"创建图谱记忆更新器: simulation_id={simulation_id}, graph_id={graph_id}")
             return updater
     

@@ -1576,32 +1576,36 @@ def start_simulation():
                     "error": f"模拟未准备好，当前状态: {state.status.value}，请先调用 /prepare 接口"
                 }), 400
         
-        # 获取图谱ID（用于图谱记忆更新）
+        # 获取图谱ID和本体（用于图谱记忆更新）
         graph_id = None
+        ontology = None
         if enable_graph_memory_update:
             # 从模拟状态或项目中获取 graph_id
             graph_id = state.graph_id
-            if not graph_id:
-                # 尝试从项目中获取
-                project = ProjectManager.get_project(state.project_id)
-                if project:
-                    graph_id = project.graph_id
-            
+            project = ProjectManager.get_project(state.project_id)
+            if not graph_id and project:
+                graph_id = project.graph_id
+
             if not graph_id:
                 return jsonify({
                     "success": False,
                     "error": "启用图谱记忆更新需要有效的 graph_id，请确保项目已构建图谱"
                 }), 400
-            
+
+            # 加载本体以约束图谱记忆更新的 edge/entity 类型
+            if project and project.ontology:
+                ontology = project.ontology
+
             logger.info(f"启用图谱记忆更新: simulation_id={simulation_id}, graph_id={graph_id}")
-        
+
         # 启动模拟
         run_state = SimulationRunner.start_simulation(
             simulation_id=simulation_id,
             platform=platform,
             max_rounds=max_rounds,
             enable_graph_memory_update=enable_graph_memory_update,
-            graph_id=graph_id
+            graph_id=graph_id,
+            ontology=ontology
         )
         
         # 更新模拟状态

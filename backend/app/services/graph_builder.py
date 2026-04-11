@@ -34,6 +34,65 @@ class GraphInfo:
         }
 
 
+def parse_ontology(ontology: Dict[str, Any]):
+    """Parse an ontology dict into Graphiti-compatible Pydantic models.
+
+    Returns ``(entity_types, edge_types, edge_type_map)`` — any of which may
+    be ``None`` when the ontology section is empty.  Reusable by both
+    :class:`GraphBuilderService` and :class:`ZepGraphMemoryUpdater`.
+    """
+    from pydantic import BaseModel, Field
+    from typing import Optional as Opt
+
+    entity_types: Dict[str, Any] = {}
+    for entity_def in ontology.get("entity_types", []):
+        name = entity_def["name"]
+        description = entity_def.get("description", f"A {name} entity.")
+
+        attrs: Dict[str, Any] = {}
+        annotations: Dict[str, Any] = {}
+        for attr_def in entity_def.get("attributes", []):
+            attr_name = attr_def["name"]
+            attr_desc = attr_def.get("description", attr_name)
+            attrs[attr_name] = Field(description=attr_desc, default=None)
+            annotations[attr_name] = Opt[str]
+
+        attrs["__annotations__"] = annotations
+        entity_cls = type(name, (BaseModel,), attrs)
+        entity_cls.__doc__ = description
+        entity_types[name] = entity_cls
+
+    edge_types: Dict[str, Any] = {}
+    edge_type_map: Dict[tuple, list] = {}
+    for edge_def in ontology.get("edge_types", []):
+        name = edge_def["name"]
+        description = edge_def.get("description", f"A {name} relationship.")
+
+        attrs: Dict[str, Any] = {}
+        annotations: Dict[str, Any] = {}
+        for attr_def in edge_def.get("attributes", []):
+            attr_name = attr_def["name"]
+            attr_desc = attr_def.get("description", attr_name)
+            attrs[attr_name] = Field(description=attr_desc, default=None)
+            annotations[attr_name] = Opt[str]
+
+        attrs["__annotations__"] = annotations
+        class_name = ''.join(word.capitalize() for word in name.split('_'))
+        edge_cls = type(class_name, (BaseModel,), attrs)
+        edge_cls.__doc__ = description
+        edge_types[name] = edge_cls
+
+        for st in edge_def.get("source_targets", []):
+            key = (st.get("source", "Entity"), st.get("target", "Entity"))
+            edge_type_map.setdefault(key, []).append(name)
+
+    return (
+        entity_types if entity_types else None,
+        edge_types if edge_types else None,
+        edge_type_map if edge_type_map else None,
+    )
+
+
 class GraphBuilderService:
     """
     图谱构建服务
@@ -162,54 +221,7 @@ class GraphBuilderService:
         These are stored on the service instance and passed to each
         ``add_episode()`` call.
         """
-        from pydantic import BaseModel, Field
-        from typing import Optional as Opt
-
-        entity_types: Dict[str, Any] = {}
-        for entity_def in ontology.get("entity_types", []):
-            name = entity_def["name"]
-            description = entity_def.get("description", f"A {name} entity.")
-
-            attrs: Dict[str, Any] = {}
-            annotations: Dict[str, Any] = {}
-            for attr_def in entity_def.get("attributes", []):
-                attr_name = attr_def["name"]
-                attr_desc = attr_def.get("description", attr_name)
-                attrs[attr_name] = Field(description=attr_desc, default=None)
-                annotations[attr_name] = Opt[str]
-
-            attrs["__annotations__"] = annotations
-            entity_cls = type(name, (BaseModel,), attrs)
-            entity_cls.__doc__ = description
-            entity_types[name] = entity_cls
-
-        edge_types: Dict[str, Any] = {}
-        edge_type_map: Dict[tuple, list] = {}
-        for edge_def in ontology.get("edge_types", []):
-            name = edge_def["name"]
-            description = edge_def.get("description", f"A {name} relationship.")
-
-            attrs = {}
-            annotations = {}
-            for attr_def in edge_def.get("attributes", []):
-                attr_name = attr_def["name"]
-                attr_desc = attr_def.get("description", attr_name)
-                attrs[attr_name] = Field(description=attr_desc, default=None)
-                annotations[attr_name] = Opt[str]
-
-            attrs["__annotations__"] = annotations
-            class_name = ''.join(word.capitalize() for word in name.split('_'))
-            edge_cls = type(class_name, (BaseModel,), attrs)
-            edge_cls.__doc__ = description
-            edge_types[name] = edge_cls
-
-            for st in edge_def.get("source_targets", []):
-                key = (st.get("source", "Entity"), st.get("target", "Entity"))
-                edge_type_map.setdefault(key, []).append(name)
-
-        self._entity_types = entity_types if entity_types else None
-        self._edge_types = edge_types if edge_types else None
-        self._edge_type_map = edge_type_map if edge_type_map else None
+        self._entity_types, self._edge_types, self._edge_type_map = parse_ontology(ontology)
 
     def add_text_batches(
         self,

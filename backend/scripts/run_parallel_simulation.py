@@ -1146,11 +1146,12 @@ class PlatformSimulation:
 
 
 async def run_twitter_simulation(
-    config: Dict[str, Any], 
+    config: Dict[str, Any],
     simulation_dir: str,
     action_logger: Optional[PlatformActionLogger] = None,
     main_logger: Optional[SimulationLogManager] = None,
-    max_rounds: Optional[int] = None
+    max_rounds: Optional[int] = None,
+    start_round: int = 0,
 ) -> PlatformSimulation:
     """运行Twitter模拟
     
@@ -1196,33 +1197,34 @@ async def run_twitter_simulation(
             agent_names[agent_id] = getattr(agent, 'name', f'Agent_{agent_id}')
     
     db_path = os.path.join(simulation_dir, "twitter_simulation.db")
-    if os.path.exists(db_path):
+    resuming = start_round > 0
+    if not resuming and os.path.exists(db_path):
         os.remove(db_path)
-    
+
     result.env = oasis.make(
         agent_graph=result.agent_graph,
         platform=oasis.DefaultPlatformType.TWITTER,
         database_path=db_path,
         semaphore=int(os.environ.get("OASIS_SEMAPHORE", "8")),  # 限制最大并发 LLM 请求数，防止 API 过载
     )
-    
+
     await result.env.reset()
-    log_info("环境已启动")
-    
+    log_info(f"环境已启动{'（续跑，从第 ' + str(start_round) + ' 轮开始）' if resuming else ''}")
+
     if action_logger:
         action_logger.log_simulation_start(config)
-    
+
     total_actions = 0
     last_rowid = 0  # 跟踪数据库中最后处理的行号（使用 rowid 避免 created_at 格式差异）
-    
-    # 执行初始事件
+
+    # 执行初始事件（续跑时跳过，避免重复发帖）
     event_config = config.get("event_config", {})
-    initial_posts = event_config.get("initial_posts", [])
-    
+    initial_posts = [] if resuming else event_config.get("initial_posts", [])
+
     # 记录 round 0 开始（初始事件阶段）
-    if action_logger:
+    if action_logger and not resuming:
         action_logger.log_round_start(0, 0)  # round 0, simulated_hour 0
-    
+
     initial_action_count = 0
     if initial_posts:
         initial_actions = {}
@@ -1253,27 +1255,27 @@ async def run_twitter_simulation(
             await result.env.step(initial_actions)
             log_info(f"已发布 {len(initial_actions)} 条初始帖子")
     
-    # 记录 round 0 结束
-    if action_logger:
+    # 记录 round 0 结束（续跑时跳过）
+    if action_logger and not resuming:
         action_logger.log_round_end(0, initial_action_count)
-    
+
     # 主模拟循环
     time_config = config.get("time_config", {})
     total_hours = time_config.get("total_simulation_hours", 72)
     minutes_per_round = time_config.get("minutes_per_round", 30)
     total_rounds = (total_hours * 60) // minutes_per_round
-    
+
     # 如果指定了最大轮数，则截断
     if max_rounds is not None and max_rounds > 0:
         original_rounds = total_rounds
         total_rounds = min(total_rounds, max_rounds)
         if total_rounds < original_rounds:
             log_info(f"轮数已截断: {original_rounds} -> {total_rounds} (max_rounds={max_rounds})")
-    
+
     start_time = datetime.now()
     round_delay = float(os.environ.get("OASIS_ROUND_DELAY", "2.0"))  # 每轮结束后等待秒数，让API速率限制窗口恢复
 
-    for round_num in range(total_rounds):
+    for round_num in range(start_round, total_rounds):
         # 检查是否收到退出信号
         if _shutdown_event and _shutdown_event.is_set():
             if main_logger:
@@ -1342,11 +1344,12 @@ async def run_twitter_simulation(
 
 
 async def run_reddit_simulation(
-    config: Dict[str, Any], 
+    config: Dict[str, Any],
     simulation_dir: str,
     action_logger: Optional[PlatformActionLogger] = None,
     main_logger: Optional[SimulationLogManager] = None,
-    max_rounds: Optional[int] = None
+    max_rounds: Optional[int] = None,
+    start_round: int = 0,
 ) -> PlatformSimulation:
     """运行Reddit模拟
     
@@ -1396,31 +1399,32 @@ async def run_reddit_simulation(
             agent_names[agent_id] = getattr(agent, 'name', f'Agent_{agent_id}')
     
     db_path = os.path.join(simulation_dir, "reddit_simulation.db")
-    if os.path.exists(db_path):
+    resuming = start_round > 0
+    if not resuming and os.path.exists(db_path):
         os.remove(db_path)
-    
+
     result.env = oasis.make(
         agent_graph=result.agent_graph,
         platform=oasis.DefaultPlatformType.REDDIT,
         database_path=db_path,
         semaphore=int(os.environ.get("OASIS_SEMAPHORE", "8")),  # 限制最大并发 LLM 请求数，防止 API 过载
     )
-    
+
     await result.env.reset()
-    log_info("环境已启动")
-    
+    log_info(f"环境已启动{'（续跑，从第 ' + str(start_round) + ' 轮开始）' if resuming else ''}")
+
     if action_logger:
         action_logger.log_simulation_start(config)
-    
+
     total_actions = 0
     last_rowid = 0  # 跟踪数据库中最后处理的行号（使用 rowid 避免 created_at 格式差异）
-    
-    # 执行初始事件
+
+    # 执行初始事件（续跑时跳过，避免重复发帖）
     event_config = config.get("event_config", {})
-    initial_posts = event_config.get("initial_posts", [])
-    
+    initial_posts = [] if resuming else event_config.get("initial_posts", [])
+
     # 记录 round 0 开始（初始事件阶段）
-    if action_logger:
+    if action_logger and not resuming:
         action_logger.log_round_start(0, 0)  # round 0, simulated_hour 0
     
     initial_action_count = 0
@@ -1461,27 +1465,27 @@ async def run_reddit_simulation(
             await result.env.step(initial_actions)
             log_info(f"已发布 {len(initial_actions)} 条初始帖子")
     
-    # 记录 round 0 结束
-    if action_logger:
+    # 记录 round 0 结束（续跑时跳过）
+    if action_logger and not resuming:
         action_logger.log_round_end(0, initial_action_count)
-    
+
     # 主模拟循环
     time_config = config.get("time_config", {})
     total_hours = time_config.get("total_simulation_hours", 72)
     minutes_per_round = time_config.get("minutes_per_round", 30)
     total_rounds = (total_hours * 60) // minutes_per_round
-    
+
     # 如果指定了最大轮数，则截断
     if max_rounds is not None and max_rounds > 0:
         original_rounds = total_rounds
         total_rounds = min(total_rounds, max_rounds)
         if total_rounds < original_rounds:
             log_info(f"轮数已截断: {original_rounds} -> {total_rounds} (max_rounds={max_rounds})")
-    
+
     start_time = datetime.now()
     round_delay = float(os.environ.get("OASIS_ROUND_DELAY", "2.0"))  # 每轮结束后等待秒数，让API速率限制窗口恢复
 
-    for round_num in range(total_rounds):
+    for round_num in range(start_round, total_rounds):
         # 检查是否收到退出信号
         if _shutdown_event and _shutdown_event.is_set():
             if main_logger:
@@ -1579,7 +1583,13 @@ async def main():
         default=False,
         help='模拟完成后立即关闭环境，不进入等待命令模式'
     )
-    
+    parser.add_argument(
+        '--start-round',
+        type=int,
+        default=0,
+        help='从指定轮次续跑（跳过已完成的轮次，保留现有DB数据）'
+    )
+
     args = parser.parse_args()
     
     # 在 main 函数开始时创建 shutdown 事件，确保整个程序都能响应退出信号
@@ -1637,14 +1647,14 @@ async def main():
     reddit_result: Optional[PlatformSimulation] = None
     
     if args.twitter_only:
-        twitter_result = await run_twitter_simulation(config, simulation_dir, twitter_logger, log_manager, args.max_rounds)
+        twitter_result = await run_twitter_simulation(config, simulation_dir, twitter_logger, log_manager, args.max_rounds, start_round=args.start_round)
     elif args.reddit_only:
-        reddit_result = await run_reddit_simulation(config, simulation_dir, reddit_logger, log_manager, args.max_rounds)
+        reddit_result = await run_reddit_simulation(config, simulation_dir, reddit_logger, log_manager, args.max_rounds, start_round=args.start_round)
     else:
         # 并行运行（每个平台使用独立的日志记录器）
         results = await asyncio.gather(
-            run_twitter_simulation(config, simulation_dir, twitter_logger, log_manager, args.max_rounds),
-            run_reddit_simulation(config, simulation_dir, reddit_logger, log_manager, args.max_rounds),
+            run_twitter_simulation(config, simulation_dir, twitter_logger, log_manager, args.max_rounds, start_round=args.start_round),
+            run_reddit_simulation(config, simulation_dir, reddit_logger, log_manager, args.max_rounds, start_round=args.start_round),
         )
         twitter_result, reddit_result = results
     

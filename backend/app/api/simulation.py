@@ -1503,6 +1503,7 @@ def start_simulation():
         max_rounds = data.get('max_rounds')  # 可选：最大模拟轮数
         enable_graph_memory_update = data.get('enable_graph_memory_update', False)  # 可选：是否启用图谱记忆更新
         force = data.get('force', False)  # 可选：强制重新开始
+        resume = data.get('resume', False)  # 可选：从上次中断处续跑
 
         # 验证 max_rounds 参数
         if max_rounds is not None:
@@ -1610,7 +1611,8 @@ def start_simulation():
             max_rounds=max_rounds,
             enable_graph_memory_update=enable_graph_memory_update,
             graph_id=graph_id,
-            ontology=ontology
+            ontology=ontology,
+            resume=resume,
         )
         
         # 更新模拟状态

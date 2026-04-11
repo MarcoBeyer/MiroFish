@@ -310,6 +310,31 @@ class SimulationRunner:
         cls._run_states[state.simulation_id] = state
     
     @classmethod
+    @classmethod
+    def _get_last_completed_round(cls, simulation_id: str) -> int:
+        """Read actions.jsonl files and return the highest completed round number."""
+        sim_dir = os.path.join(cls.RUN_STATE_DIR, simulation_id)
+        max_round = 0
+        for platform in ('twitter', 'reddit'):
+            log_path = os.path.join(sim_dir, platform, 'actions.jsonl')
+            if not os.path.exists(log_path):
+                continue
+            try:
+                with open(log_path, 'r', encoding='utf-8') as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            entry = json.loads(line)
+                            if entry.get('event_type') == 'round_end':
+                                max_round = max(max_round, entry.get('round', 0))
+                        except json.JSONDecodeError:
+                            pass
+            except OSError:
+                pass
+        return max_round
+
     def start_simulation(
         cls,
         simulation_id: str,
@@ -317,7 +342,8 @@ class SimulationRunner:
         max_rounds: int = None,  # 最大模拟轮数（可选，用于截断过长的模拟）
         enable_graph_memory_update: bool = False,  # 是否将活动更新到Zep图谱
         graph_id: str = None,  # Zep图谱ID（启用图谱更新时必需）
-        ontology: dict = None  # 本体定义（约束图谱记忆更新的 edge/entity 类型）
+        ontology: dict = None,  # 本体定义（约束图谱记忆更新的 edge/entity 类型）
+        resume: bool = False,  # 从上次中断处续跑
     ) -> SimulationRunState:
         """
         启动模拟
@@ -423,10 +449,17 @@ class SimulationRunner:
             # 如果指定了最大轮数，添加到命令行参数
             if max_rounds is not None and max_rounds > 0:
                 cmd.extend(["--max-rounds", str(max_rounds)])
-            
+
+            # 续跑：从上次中断的轮次继续
+            if resume:
+                start_round = cls._get_last_completed_round(simulation_id)
+                if start_round > 0:
+                    cmd.extend(["--start-round", str(start_round)])
+                    logger.info(f"续跑模式: simulation_id={simulation_id}, start_round={start_round}")
+
             # 创建主日志文件，避免 stdout/stderr 管道缓冲区满导致进程阻塞
             main_log_path = os.path.join(sim_dir, "simulation.log")
-            main_log_file = open(main_log_path, 'w', encoding='utf-8')
+            main_log_file = open(main_log_path, 'a' if resume else 'w', encoding='utf-8')
             
             # 设置子进程环境变量，确保 Windows 上使用 UTF-8 编码
             # 这可以修复第三方库（如 OASIS）读取文件时未指定编码的问题

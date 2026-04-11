@@ -114,6 +114,14 @@
               Force Start
             </button>
             <button
+              class="action-btn resume"
+              @click="handleResume"
+              :disabled="actionLoading"
+              v-if="runStatus && ['failed', 'stopped'].includes(runStatus.runner_status) && (runStatus.current_round || 0) > 0"
+            >
+              Resume
+            </button>
+            <button
               class="action-btn delete"
               @click="handleDelete"
               :disabled="actionLoading"
@@ -343,6 +351,22 @@ async function handleForceStart() {
   }
 }
 
+async function handleResume() {
+  actionLoading.value = true
+  actionMessage.value = ''
+  try {
+    await startSimulation({ simulation_id: selectedSim.value.simulation_id, resume: true })
+    actionMessage.value = `Resuming from round ${runStatus.value?.current_round || 0}...`
+    actionMessageClass.value = 'success'
+    await fetchRunStatus()
+  } catch (e) {
+    actionMessage.value = e.response?.data?.error || e.message || 'Resume failed'
+    actionMessageClass.value = 'error'
+  } finally {
+    actionLoading.value = false
+  }
+}
+
 function handleDelete() {
   showDeleteConfirm.value = true
 }
@@ -485,6 +509,8 @@ onUnmounted(() => { if (pollTimer) clearInterval(pollTimer) })
 .action-btn.stop:hover:not(:disabled) { opacity: 0.85; }
 .action-btn.start { background: var(--black); color: white; }
 .action-btn.start:hover:not(:disabled) { opacity: 0.8; }
+.action-btn.resume { background: transparent; border: 1px solid var(--orange); color: var(--orange); }
+.action-btn.resume:hover:not(:disabled) { background: var(--orange); color: white; }
 .action-btn.delete { background: transparent; border: 1px solid #ef4444; color: #ef4444; }
 .action-btn.delete:hover:not(:disabled) { background: #ef4444; color: white; }
 

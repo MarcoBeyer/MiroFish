@@ -335,6 +335,7 @@ class SimulationRunner:
                 pass
         return max_round
 
+    @classmethod
     def start_simulation(
         cls,
         simulation_id: str,

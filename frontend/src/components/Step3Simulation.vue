@@ -687,11 +687,28 @@ watch(() => props.systemLogs?.length, () => {
   })
 })
 
-onMounted(() => {
+onMounted(async () => {
   addLog(t('log.step3Init'))
-  if (props.simulationId) {
-    doStartSimulation()
+  if (!props.simulationId) return
+
+  // Check if simulation is already running before force-starting
+  try {
+    const res = await getRunStatus(props.simulationId)
+    const status = res?.data?.runner_status || res?.runner_status
+    if (status && ['running', 'starting', 'completed'].includes(status)) {
+      // Attach to existing simulation without killing it
+      addLog(t('log.attachingExistingSim', { status }))
+      runStatus.value = res.data || res
+      phase.value = 1
+      startStatusPolling()
+      startDetailPolling()
+      return
+    }
+  } catch {
+    // Can't check status — fall through to normal start
   }
+
+  doStartSimulation()
 })
 
 onUnmounted(() => {

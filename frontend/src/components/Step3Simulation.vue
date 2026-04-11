@@ -398,7 +398,6 @@ const doStartSimulation = async () => {
     const params = {
       simulation_id: props.simulationId,
       platform: 'parallel',
-      force: true,  // 强制重新开始
       enable_graph_memory_update: true  // 开启动态图谱更新
     }
     
@@ -694,11 +693,12 @@ onMounted(async () => {
   // Check if simulation is already running before force-starting
   try {
     const res = await getRunStatus(props.simulationId)
-    const status = res?.data?.runner_status || res?.runner_status
+    // axios interceptor unwraps response.data, so res IS the data object directly
+    const status = res?.runner_status
     if (status && ['running', 'starting', 'completed'].includes(status)) {
       // Attach to existing simulation without killing it
       addLog(t('log.attachingExistingSim', { status }))
-      runStatus.value = res.data || res
+      runStatus.value = res
       phase.value = 1
       startStatusPolling()
       startDetailPolling()

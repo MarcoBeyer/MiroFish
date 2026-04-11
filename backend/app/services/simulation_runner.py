@@ -359,10 +359,21 @@ class SimulationRunner:
         Returns:
             SimulationRunState
         """
-        # 检查是否已在运行
+        # 检查是否已在运行 — 先查内存中的进程对象，再查持久化状态
+        live_process = cls._processes.get(simulation_id)
+        if live_process is not None and live_process.poll() is None:
+            raise ValueError(f"模拟已在运行中 (PID {live_process.pid}): {simulation_id}")
         existing = cls.get_run_state(simulation_id)
         if existing and existing.runner_status in [RunnerStatus.RUNNING, RunnerStatus.STARTING]:
-            raise ValueError(f"模拟已在运行中: {simulation_id}")
+            # Double-check via saved PID — if the OS process is gone, allow restart
+            if existing.process_pid:
+                try:
+                    os.kill(existing.process_pid, 0)  # signal 0 = existence check
+                    raise ValueError(f"模拟已在运行中 (PID {existing.process_pid}): {simulation_id}")
+                except OSError:
+                    pass  # Process no longer exists — safe to restart
+            else:
+                raise ValueError(f"模拟已在运行中: {simulation_id}")
         
         # 加载模拟配置
         sim_dir = os.path.join(cls.RUN_STATE_DIR, simulation_id)

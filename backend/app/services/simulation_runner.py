@@ -226,6 +226,11 @@ class SimulationRunner:
     
     # 图谱记忆更新配置
     _graph_memory_enabled: Dict[str, bool] = {}  # simulation_id -> enabled
+
+    # 启动命令缓存（用于 OOM 后自动续跑）
+    _launch_cmds: Dict[str, list] = {}       # simulation_id -> base cmd (without --start-round)
+    _launch_platforms: Dict[str, str] = {}   # simulation_id -> platform
+    _launch_envs: Dict[str, dict] = {}       # simulation_id -> env dict
     
     @classmethod
     def get_run_state(cls, simulation_id: str) -> Optional[SimulationRunState]:
@@ -456,15 +461,22 @@ class SimulationRunner:
             #   reddit/actions.jsonl  - Reddit 动作日志
             #   simulation.log        - 主进程日志
             
-            cmd = [
+            # Base command — no --start-round yet (added per-launch below)
+            base_cmd = [
                 sys.executable,  # Python解释器
                 script_path,
-                "--config", config_path,  # 使用完整配置文件路径
+                "--config", config_path,
             ]
-            
+
             # 如果指定了最大轮数，添加到命令行参数
             if max_rounds is not None and max_rounds > 0:
-                cmd.extend(["--max-rounds", str(max_rounds)])
+                base_cmd.extend(["--max-rounds", str(max_rounds)])
+
+            # Save base command and platform for potential OOM auto-resume
+            cls._launch_cmds[simulation_id] = base_cmd
+            cls._launch_platforms[simulation_id] = platform
+
+            cmd = list(base_cmd)
 
             # 续跑：从上次中断的轮次继续
             if resume:
@@ -480,8 +492,9 @@ class SimulationRunner:
             # 设置子进程环境变量，确保 Windows 上使用 UTF-8 编码
             # 这可以修复第三方库（如 OASIS）读取文件时未指定编码的问题
             env = os.environ.copy()
-            env['PYTHONUTF8'] = '1'  # Python 3.7+ 支持，让所有 open() 默认使用 UTF-8
-            env['PYTHONIOENCODING'] = 'utf-8'  # 确保 stdout/stderr 使用 UTF-8
+            env['PYTHONUTF8'] = '1'
+            env['PYTHONIOENCODING'] = 'utf-8'
+            cls._launch_envs[simulation_id] = env
             
             # 设置工作目录为模拟目录（数据库等文件会生成在此）
             # 使用 start_new_session=True 创建新的进程组，确保可以通过 os.killpg 终止所有子进程
@@ -573,11 +586,97 @@ class SimulationRunner:
             
             # 进程结束
             exit_code = process.returncode
-            
+
             if exit_code == 0:
                 state.runner_status = RunnerStatus.COMPLETED
                 state.completed_at = datetime.now().isoformat()
                 logger.info(f"模拟完成: {simulation_id}")
+                state.twitter_running = False
+                state.reddit_running = False
+                cls._save_run_state(state)
+            elif exit_code == -9:
+                # SIGKILL — likely OOM. Auto-resume after a short delay.
+                logger.warning(f"模拟被 SIGKILL 终止 (OOM?): {simulation_id}, 将在 15s 后自动续跑")
+                state.runner_status = RunnerStatus.RUNNING
+                state.error = f"OOM kill (exit -9) — auto-resuming after 15s"
+                state.twitter_running = False
+                state.reddit_running = False
+                cls._save_run_state(state)
+                time.sleep(15)
+
+                base_cmd = cls._launch_cmds.get(simulation_id)
+                plat = cls._launch_platforms.get(simulation_id, 'parallel')
+                env = cls._launch_envs.get(simulation_id)
+                if base_cmd:
+                    start_round = cls._get_last_completed_round(simulation_id, platform=plat)
+                    resume_cmd = list(base_cmd)
+                    if start_round > 0:
+                        resume_cmd.extend(["--start-round", str(start_round)])
+                    logger.info(f"OOM 自动续跑: simulation_id={simulation_id}, start_round={start_round}")
+
+                    main_log_path = os.path.join(sim_dir, "simulation.log")
+                    main_log_file = open(main_log_path, 'a', encoding='utf-8')
+                    cls._stdout_files[simulation_id] = main_log_file
+
+                    new_process = subprocess.Popen(
+                        resume_cmd,
+                        cwd=sim_dir,
+                        stdout=main_log_file,
+                        stderr=subprocess.STDOUT,
+                        text=True,
+                        encoding='utf-8',
+                        bufsize=1,
+                        env=env,
+                        start_new_session=True,
+                    )
+                    state.process_pid = new_process.pid
+                    state.runner_status = RunnerStatus.RUNNING
+                    if plat in ('twitter', 'parallel'):
+                        state.twitter_running = True
+                    if plat in ('reddit', 'parallel'):
+                        state.reddit_running = True
+                    cls._processes[simulation_id] = new_process
+                    cls._save_run_state(state)
+
+                    # Continue monitoring the new process
+                    process = new_process
+                    twitter_position = 0
+                    reddit_position = 0
+                    # Re-enter the monitoring loop
+                    while process.poll() is None:
+                        if os.path.exists(twitter_actions_log):
+                            twitter_position = cls._read_action_log(
+                                twitter_actions_log, twitter_position, state, "twitter"
+                            )
+                        if os.path.exists(reddit_actions_log):
+                            reddit_position = cls._read_action_log(
+                                reddit_actions_log, reddit_position, state, "reddit"
+                            )
+                        cls._save_run_state(state)
+                        time.sleep(2)
+                    # Final log flush
+                    if os.path.exists(twitter_actions_log):
+                        cls._read_action_log(twitter_actions_log, twitter_position, state, "twitter")
+                    if os.path.exists(reddit_actions_log):
+                        cls._read_action_log(reddit_actions_log, reddit_position, state, "reddit")
+                    final_code = process.returncode
+                    if final_code == 0:
+                        state.runner_status = RunnerStatus.COMPLETED
+                        state.completed_at = datetime.now().isoformat()
+                        state.error = None
+                    else:
+                        state.runner_status = RunnerStatus.FAILED
+                        state.error = f"OOM 续跑后再次失败 (exit {final_code})"
+                    state.twitter_running = False
+                    state.reddit_running = False
+                    cls._save_run_state(state)
+                else:
+                    state.runner_status = RunnerStatus.FAILED
+                    state.error = "OOM kill — no base_cmd cached, cannot auto-resume"
+                    state.twitter_running = False
+                    state.reddit_running = False
+                    cls._save_run_state(state)
+                return  # Monitor done
             else:
                 state.runner_status = RunnerStatus.FAILED
                 # 从主日志文件读取错误信息
@@ -586,15 +685,14 @@ class SimulationRunner:
                 try:
                     if os.path.exists(main_log_path):
                         with open(main_log_path, 'r', encoding='utf-8') as f:
-                            error_info = f.read()[-2000:]  # 取最后2000字符
+                            error_info = f.read()[-2000:]
                 except Exception:
                     pass
                 state.error = f"进程退出码: {exit_code}, 错误: {error_info}"
                 logger.error(f"模拟失败: {simulation_id}, error={state.error}")
-            
-            state.twitter_running = False
-            state.reddit_running = False
-            cls._save_run_state(state)
+                state.twitter_running = False
+                state.reddit_running = False
+                cls._save_run_state(state)
             
         except Exception as e:
             logger.error(f"监控线程异常: {simulation_id}, error={str(e)}")

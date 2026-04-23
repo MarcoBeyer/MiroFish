@@ -13,6 +13,78 @@ from ..utils.locale import get_language_instruction
 logger = logging.getLogger(__name__)
 
 
+# JSON Schema for ontology output — enables server-side validation when
+# Config.LLM_USE_JSON_SCHEMA=true (z.ai / OpenAI-compatible json_schema mode).
+ONTOLOGY_JSON_SCHEMA: Dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "entity_types": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "description": {"type": "string"},
+                    "attributes": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "name": {"type": "string"},
+                                "type": {"type": "string"},
+                                "description": {"type": "string"},
+                            },
+                            "required": ["name", "type", "description"],
+                        },
+                    },
+                    "examples": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                    },
+                },
+                "required": ["name", "description", "attributes", "examples"],
+            },
+        },
+        "edge_types": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "description": {"type": "string"},
+                    "source_targets": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "source": {"type": "string"},
+                                "target": {"type": "string"},
+                            },
+                            "required": ["source", "target"],
+                        },
+                    },
+                    "attributes": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "name": {"type": "string"},
+                                "type": {"type": "string"},
+                                "description": {"type": "string"},
+                            },
+                            "required": ["name", "type", "description"],
+                        },
+                    },
+                },
+                "required": ["name", "description", "source_targets", "attributes"],
+            },
+        },
+        "analysis_summary": {"type": "string"},
+    },
+    "required": ["entity_types", "edge_types", "analysis_summary"],
+}
+
+
 def _to_pascal_case(name: str) -> str:
     """将任意格式的名称转换为 PascalCase（如 'works_for' -> 'WorksFor', 'person' -> 'Person'）"""
     # 按非字母数字字符分割
@@ -213,11 +285,14 @@ class OntologyGenerator:
             {"role": "user", "content": user_message}
         ]
         
-        # 调用LLM
+        # 调用LLM（若 LLM_USE_JSON_SCHEMA=true 则启用 z.ai 服务端 schema 校验，
+        # 失败会自动回退到 json_object 模式）
         result = self.llm_client.chat_json(
             messages=messages,
             temperature=0.3,
-            max_tokens=8192
+            max_tokens=8192,
+            schema=ONTOLOGY_JSON_SCHEMA,
+            schema_name="ontology",
         )
         
         # 验证和后处理

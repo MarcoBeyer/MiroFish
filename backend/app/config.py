@@ -31,6 +31,10 @@ class Config:
     LLM_API_KEY = os.environ.get('LLM_API_KEY')
     LLM_BASE_URL = os.environ.get('LLM_BASE_URL', 'https://api.openai.com/v1')
     LLM_MODEL_NAME = os.environ.get('LLM_MODEL_NAME', 'gpt-4o-mini')
+    # z.ai / OpenAI-compatible structured outputs (response_format=json_schema)
+    # for call sites that pass a schema. Falls back to json_object on any error,
+    # so unsupported providers keep working. Set LLM_USE_JSON_SCHEMA=false to disable.
+    LLM_USE_JSON_SCHEMA = os.environ.get('LLM_USE_JSON_SCHEMA', 'true').lower() == 'true'
 
     # Embedding config (defaults to LLM values if not set separately)
     EMBEDDING_API_KEY = os.environ.get('EMBEDDING_API_KEY') or os.environ.get('LLM_API_KEY')

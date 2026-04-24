@@ -51,7 +51,7 @@
       <!-- Right Panel: Step Components -->
       <div class="panel-wrapper right" :style="rightPanelStyle">
         <!-- Step 1: 图谱构建 -->
-        <Step1GraphBuild 
+        <Step1GraphBuild
           v-if="currentStep === 1"
           :currentPhase="currentPhase"
           :projectData="projectData"
@@ -59,7 +59,11 @@
           :buildProgress="buildProgress"
           :graphData="graphData"
           :systemLogs="systemLogs"
+          :buildError="error"
+          :canResumeBuild="canResumeBuild"
+          :resumeLoading="resumeLoading"
           @next-step="handleNextStep"
+          @resume-build="resumeBuildGraph"
         />
         <!-- Step 2: 环境搭建 -->
         <Step2EnvSetup
@@ -109,6 +113,13 @@ const currentPhase = ref(-1) // -1: Upload, 0: Ontology, 1: Build, 2: Complete
 const ontologyProgress = ref(null)
 const buildProgress = ref(null)
 const systemLogs = ref([])
+const resumeLoading = ref(false)
+
+const canResumeBuild = computed(() => {
+  return !!error.value
+    && projectData.value?.graph_id
+    && (projectData.value?.status === 'failed' || projectData.value?.status === 'graph_building')
+})
 
 // Polling timers
 let pollTimer = null
@@ -194,8 +205,10 @@ const initProject = async () => {
 const handleNewProject = async () => {
   const pending = getPendingUpload()
   if (!pending.isPending || pending.files.length === 0) {
-    error.value = 'No pending files found.'
-    addLog('Error: No pending files found for new project.')
+    // No pending upload (e.g., after reload of /process/new). Bounce to home
+    // instead of leaving the user on a dead-end page.
+    addLog('No pending upload found on /new — redirecting to home.')
+    router.replace('/')
     return
   }
   
@@ -278,7 +291,7 @@ const startBuildGraph = async () => {
     currentPhase.value = 1
     buildProgress.value = { progress: 0, message: 'Starting build...' }
     addLog('Initiating graph build...')
-    
+
     const res = await buildGraph({ project_id: currentProjectId.value })
     if (res.success) {
       addLog(`Graph build task started. Task ID: ${res.data.task_id}`)
@@ -291,6 +304,35 @@ const startBuildGraph = async () => {
   } catch (err) {
     error.value = err.message
     addLog(`Exception in startBuildGraph: ${err.message}`)
+  }
+}
+
+// 从上次中断处续跑：复用 graph_id，跳过已完成块
+const resumeBuildGraph = async () => {
+  try {
+    resumeLoading.value = true
+    error.value = ''
+    currentPhase.value = 1
+    buildProgress.value = { progress: 0, message: 'Resuming build...' }
+    addLog('Resuming graph build from last completed chunk...')
+
+    const res = await buildGraph({
+      project_id: currentProjectId.value,
+      resume: true,
+    })
+    if (res.success) {
+      addLog(`Resume task started. Task ID: ${res.data.task_id}`)
+      startGraphPolling()
+      startPollingTask(res.data.task_id)
+    } else {
+      error.value = res.error || 'Resume failed'
+      addLog(`Error resuming build: ${res.error}`)
+    }
+  } catch (err) {
+    error.value = err.message
+    addLog(`Exception in resumeBuildGraph: ${err.message}`)
+  } finally {
+    resumeLoading.value = false
   }
 }
 
@@ -352,6 +394,13 @@ const pollTaskStatus = async (taskId) => {
         stopPolling()
         error.value = task.error
         addLog(`Graph build task failed: ${task.error}`)
+        // Refresh projectData so canResumeBuild (which reads status) unlocks the resume button
+        try {
+          const projRes = await getProject(currentProjectId.value)
+          if (projRes.success) projectData.value = projRes.data
+        } catch (e) {
+          console.warn('Failed to refresh project after task failure:', e)
+        }
       }
     }
   } catch (e) {

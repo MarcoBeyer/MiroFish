@@ -315,20 +315,36 @@ def build_graph():
 
         # 检查项目状态
         force = data.get('force', False)  # 强制重新构建
-        
+        resume = data.get('resume', False)  # 从失败处继续（保留现有 graph_id 与已完成 chunk）
+
         if project.status == ProjectStatus.CREATED:
             return jsonify({
                 "success": False,
                 "error": t('api.ontologyNotGenerated')
             }), 400
-        
-        if project.status == ProjectStatus.GRAPH_BUILDING and not force:
+
+        # Resume: require an existing graph_id and a failed/stuck state
+        if resume:
+            if not project.graph_id:
+                return jsonify({
+                    "success": False,
+                    "error": "无法续跑：项目没有已创建的图谱（请改用强制重建）"
+                }), 400
+            if project.status not in [ProjectStatus.FAILED, ProjectStatus.GRAPH_BUILDING]:
+                return jsonify({
+                    "success": False,
+                    "error": f"无法续跑：当前项目状态为 {project.status.value}（仅允许 failed / graph_building 续跑）"
+                }), 400
+            # 清除错误，不重置 graph_id
+            project.error = None
+            project.graph_build_task_id = None
+        elif project.status == ProjectStatus.GRAPH_BUILDING and not force:
             return jsonify({
                 "success": False,
                 "error": t('api.graphBuilding'),
                 "task_id": project.graph_build_task_id
             }), 400
-        
+
         # 如果强制重建，重置状态
         if force and project.status in [ProjectStatus.GRAPH_BUILDING, ProjectStatus.FAILED, ProjectStatus.GRAPH_COMPLETED]:
             project.status = ProjectStatus.ONTOLOGY_GENERATED
@@ -396,24 +412,26 @@ def build_graph():
                     progress=5
                 )
                 chunks = TextProcessor.split_text(
-                    text, 
-                    chunk_size=chunk_size, 
+                    text,
+                    chunk_size=chunk_size,
                     overlap=chunk_overlap
                 )
                 total_chunks = len(chunks)
-                
-                # 创建图谱
-                task_manager.update_task(
-                    task_id,
-                    message=t('progress.creatingZepGraph'),
-                    progress=10
-                )
-                graph_id = builder.create_graph(name=graph_name)
-                
-                # 更新项目的graph_id
-                project.graph_id = graph_id
-                ProjectManager.save_project(project)
-                
+
+                # 续跑：复用已有图谱；首次构建：新建图谱
+                if resume and project.graph_id:
+                    graph_id = project.graph_id
+                    build_logger.info(f"[{task_id}] 续跑模式，复用 graph_id={graph_id}")
+                else:
+                    task_manager.update_task(
+                        task_id,
+                        message=t('progress.creatingZepGraph'),
+                        progress=10
+                    )
+                    graph_id = builder.create_graph(name=graph_name)
+                    project.graph_id = graph_id
+                    ProjectManager.save_project(project)
+
                 # 设置本体
                 task_manager.update_task(
                     task_id,
@@ -421,7 +439,16 @@ def build_graph():
                     progress=15
                 )
                 builder.set_ontology(graph_id, ontology)
-                
+
+                # 续跑：查询已完成的 chunk 以便跳过
+                skip_chunks: set = set()
+                if resume:
+                    from ..utils.zep_paging import fetch_completed_chunk_indices
+                    skip_chunks = fetch_completed_chunk_indices(builder.graphiti, graph_id)
+                    build_logger.info(
+                        f"[{task_id}] 续跑：跳过 {len(skip_chunks)} 个已完成块 / 共 {total_chunks}"
+                    )
+
                 # 添加文本（progress_callback 签名是 (msg, progress_ratio)）
                 def add_progress_callback(msg, progress_ratio):
                     progress = 15 + int(progress_ratio * 40)  # 15% - 55%
@@ -430,18 +457,19 @@ def build_graph():
                         message=msg,
                         progress=progress
                     )
-                
+
                 task_manager.update_task(
                     task_id,
                     message=t('progress.addingChunks', count=total_chunks),
                     progress=15
                 )
-                
+
                 builder.add_text_batches(
-                    graph_id, 
+                    graph_id,
                     chunks,
                     batch_size=3,
-                    progress_callback=add_progress_callback
+                    progress_callback=add_progress_callback,
+                    skip_chunks=skip_chunks,
                 )
                 
                 # 获取图谱数据

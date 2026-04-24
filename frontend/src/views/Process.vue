@@ -208,6 +208,14 @@
           <div v-else-if="error" class="graph-error">
             <span class="error-icon">⚠</span>
             <p>{{ error }}</p>
+            <button
+              v-if="canResumeBuild"
+              class="resume-btn"
+              @click="resumeBuildGraph"
+              :disabled="resumeLoading"
+            >
+              {{ resumeLoading ? '正在续跑...' : '从上次中断处续跑' }}
+            </button>
           </div>
         </div>
         
@@ -435,6 +443,14 @@ const ontologyProgress = ref(null) // 本体生成进度
 const currentPhase = ref(-1) // -1: 上传中, 0: 本体生成中, 1: 图谱构建, 2: 完成
 const selectedItem = ref(null) // 选中的节点或边
 const isFullScreen = ref(false)
+const resumeLoading = ref(false)
+
+// 是否可以续跑：构建阶段失败且已有 graph_id
+const canResumeBuild = computed(() => {
+  return !!error.value
+    && projectData.value?.graph_id
+    && (projectData.value?.status === 'failed' || projectData.value?.status === 'graph_building')
+})
 
 // DOM引用
 const graphContainer = ref(null)
@@ -682,18 +698,18 @@ const startBuildGraph = async () => {
       progress: 0,
       message: '正在启动图谱构建...'
     }
-    
+
     const response = await buildGraph({ project_id: currentProjectId.value })
-    
+
     if (response.success) {
       buildProgress.value.message = '图谱构建任务已启动...'
-      
+
       // 保存 task_id 用于轮询
       const taskId = response.data.task_id
-      
+
       // 启动图谱数据轮询（独立于任务状态轮询）
       startGraphPolling()
-      
+
       // 启动任务状态轮询
       startPollingTask(taskId)
     } else {
@@ -704,6 +720,39 @@ const startBuildGraph = async () => {
     console.error('Build graph error:', err)
     error.value = '启动图谱构建失败: ' + (err.message || '未知错误')
     buildProgress.value = null
+  }
+}
+
+// 从上次中断处续跑：复用 graph_id，跳过已完成块
+const resumeBuildGraph = async () => {
+  try {
+    resumeLoading.value = true
+    error.value = ''
+    currentPhase.value = 1
+    buildProgress.value = {
+      progress: 0,
+      message: '正在续跑图谱构建...'
+    }
+
+    const response = await buildGraph({
+      project_id: currentProjectId.value,
+      resume: true,
+    })
+
+    if (response.success) {
+      buildProgress.value.message = '续跑任务已启动...'
+      startGraphPolling()
+      startPollingTask(response.data.task_id)
+    } else {
+      error.value = response.error || '续跑图谱构建失败'
+      buildProgress.value = null
+    }
+  } catch (err) {
+    console.error('Resume build error:', err)
+    error.value = '续跑图谱构建失败: ' + (err.message || '未知错误')
+    buildProgress.value = null
+  } finally {
+    resumeLoading.value = false
   }
 }
 
@@ -1326,6 +1375,27 @@ onUnmounted(() => {
   left: 50%;
   transform: translate(-50%, -50%);
   text-align: center;
+}
+
+.resume-btn {
+  margin-top: 16px;
+  padding: 8px 20px;
+  font-size: 14px;
+  background: #FF6B35;
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.resume-btn:hover:not(:disabled) {
+  background: #e85a25;
+}
+
+.resume-btn:disabled {
+  background: #999;
+  cursor: not-allowed;
 }
 
 .loading-animation {

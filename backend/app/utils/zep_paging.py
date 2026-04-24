@@ -76,6 +76,45 @@ def fetch_all_nodes(
     )
 
 
+def fetch_completed_chunk_indices(
+    graphiti,
+    group_id: str,
+    max_retries: int = _DEFAULT_MAX_RETRIES,
+    retry_delay: float = _DEFAULT_RETRY_DELAY,
+) -> set[int]:
+    """Return set of already-persisted chunk indices for *group_id*.
+
+    Graph build names each episode ``chunk_{N}`` (1-indexed). This looks up
+    existing Episodic nodes under the group and extracts those N values so
+    a resumed build can skip them.
+    """
+    from .graphiti_client import run_async
+
+    async def _fetch():
+        driver = graphiti.driver
+        records, _, _ = await driver.execute_query(
+            "MATCH (e:Episodic) WHERE e.group_id = $gid AND e.name STARTS WITH 'chunk_' "
+            "RETURN e.name AS name",
+            gid=group_id,
+        )
+        return [record["name"] for record in records]
+
+    names = _with_retry(
+        lambda: run_async(_fetch()),
+        max_retries=max_retries,
+        retry_delay=retry_delay,
+        description=f"fetch completed chunks (group={group_id})",
+    )
+
+    indices: set[int] = set()
+    for name in names:
+        try:
+            indices.add(int(name.removeprefix("chunk_")))
+        except (ValueError, AttributeError):
+            continue
+    return indices
+
+
 def fetch_all_edges(
     graphiti,
     group_id: str,

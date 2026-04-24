@@ -140,6 +140,22 @@
               <span class="stat-label">{{ $t('step1.schemaTypes') }}</span>
             </div>
           </div>
+
+          <!-- Build error + resume button -->
+          <div v-if="buildError" class="build-error-panel">
+            <div class="build-error-msg">
+              <span class="error-icon">⚠</span>
+              <span>{{ buildError }}</span>
+            </div>
+            <button
+              v-if="canResumeBuild"
+              class="resume-btn"
+              :disabled="resumeLoading"
+              @click="emit('resume-build')"
+            >
+              {{ resumeLoading ? 'Resuming…' : 'Resume from last completed chunk' }}
+            </button>
+          </div>
         </div>
       </div>
 
@@ -201,10 +217,13 @@ const props = defineProps({
   ontologyProgress: Object,
   buildProgress: Object,
   graphData: Object,
-  systemLogs: { type: Array, default: () => [] }
+  systemLogs: { type: Array, default: () => [] },
+  buildError: { type: String, default: '' },
+  canResumeBuild: { type: Boolean, default: false },
+  resumeLoading: { type: Boolean, default: false }
 })
 
-defineEmits(['next-step'])
+const emit = defineEmits(['next-step', 'resume-build'])
 
 const selectedOntologyItem = ref(null)
 const logContent = ref(null)
@@ -598,6 +617,51 @@ watch(() => props.systemLogs.length, () => {
   text-transform: uppercase;
   margin-top: 4px;
   display: block;
+}
+
+.build-error-panel {
+  margin-top: 12px;
+  padding: 12px;
+  background: #FFF3F0;
+  border: 1px solid #FFB199;
+  border-radius: 6px;
+}
+
+.build-error-msg {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  font-size: 12px;
+  color: #B33A1A;
+  word-break: break-word;
+}
+
+.build-error-msg .error-icon {
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.resume-btn {
+  margin-top: 10px;
+  width: 100%;
+  background: #FF6B35;
+  color: #FFF;
+  border: none;
+  padding: 10px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.resume-btn:hover:not(:disabled) {
+  background: #e85a25;
+}
+
+.resume-btn:disabled {
+  background: #CCC;
+  cursor: not-allowed;
 }
 
 /* Step 03 Button */

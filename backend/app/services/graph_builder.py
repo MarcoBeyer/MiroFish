@@ -223,20 +223,47 @@ class GraphBuilderService:
         ``add_episode()`` call.
         """
         self._entity_types, self._edge_types, self._edge_type_map = parse_ontology(ontology)
+        # Enumerate allowed types in the prompt — graphiti's own edge_types
+        # listing isn't strongly respected by weaker LLMs (GLM etc.).
+        self._extraction_instructions: Optional[str] = None
+        if self._edge_types:
+            allowed = ", ".join(self._edge_types.keys())
+            self._extraction_instructions = (
+                f"IMPORTANT: The ONLY valid values for relation_type are: [{allowed}]. "
+                "Do NOT invent new relation types under any circumstance. If a relationship "
+                "does not fit one of the listed types exactly, skip that relationship entirely "
+                "— do not extract it, do not rename it, do not approximate it."
+            )
 
     def add_text_batches(
         self,
         graph_id: str,
         chunks: List[str],
         batch_size: int = 3,
-        progress_callback: Optional[Callable] = None
+        progress_callback: Optional[Callable] = None,
+        skip_chunks: Optional[set] = None,
     ) -> List[str]:
-        """Add text chunks to the graph via Graphiti, return episode names."""
+        """Add text chunks to the graph via Graphiti, return episode names.
+
+        When *skip_chunks* is provided, chunk indices (1-based) contained in
+        the set are skipped — used by resume-build to avoid re-processing
+        chunks that already succeeded in a prior run.
+        """
         episode_names = []
         total_chunks = len(chunks)
+        skip_chunks = skip_chunks or set()
 
         for i, chunk in enumerate(chunks):
             chunk_num = i + 1
+
+            if chunk_num in skip_chunks:
+                if progress_callback:
+                    progress = chunk_num / total_chunks
+                    progress_callback(
+                        f"跳过已完成的第 {chunk_num}/{total_chunks} 块",
+                        progress,
+                    )
+                continue
 
             if progress_callback:
                 progress = chunk_num / total_chunks
@@ -256,11 +283,7 @@ class GraphBuilderService:
                     entity_types=self._entity_types,
                     edge_types=self._edge_types,
                     edge_type_map=self._edge_type_map,
-                    custom_extraction_instructions=(
-                        "IMPORTANT: You MUST only use relation_type values from the provided FACT_TYPES list. "
-                        "Do NOT invent new relation types. If a relationship does not fit any of the provided "
-                        "types, skip that relationship entirely — do not extract it."
-                    ) if self._edge_types else None,
+                    custom_extraction_instructions=getattr(self, '_extraction_instructions', None),
                 ))
                 episode_names.append(ep_name)
             except Exception as e:

@@ -66,6 +66,7 @@ if sys.platform == 'win32':
 
 import argparse
 import asyncio
+import gc
 import json
 import logging
 import multiprocessing
@@ -1137,6 +1138,35 @@ def get_active_agents_for_round(
     return active_agents
 
 
+def _free_agent_memory(agent_graph) -> int:
+    """Clear accumulated LLM message history from OASIS agents.
+
+    OASIS rebuilds each agent's observation fresh from the database on every
+    step, so cross-round message history is redundant after it has been acted
+    upon.  Clearing it every few rounds prevents steady memory growth that
+    leads to OOM kills.
+
+    Returns the number of agents whose memory was cleared.
+    """
+    freed = 0
+    try:
+        for _agent_id, agent in agent_graph.get_agents():
+            try:
+                # camel ChatAgent.reset() keeps the system message but clears
+                # accumulated user/assistant turns.
+                if hasattr(agent, 'reset'):
+                    agent.reset()
+                    freed += 1
+                elif hasattr(agent, 'memory') and hasattr(agent.memory, 'clear'):
+                    agent.memory.clear()
+                    freed += 1
+            except Exception:
+                pass
+    except Exception:
+        pass
+    return freed
+
+
 class PlatformSimulation:
     """平台模拟结果容器"""
     def __init__(self):
@@ -1205,7 +1235,7 @@ async def run_twitter_simulation(
         agent_graph=result.agent_graph,
         platform=oasis.DefaultPlatformType.TWITTER,
         database_path=db_path,
-        semaphore=int(os.environ.get("OASIS_SEMAPHORE", "8")),  # 限制最大并发 LLM 请求数，防止 API 过载
+        semaphore=int(os.environ.get("OASIS_SEMAPHORE", "4")),  # 限制最大并发 LLM 请求数，防止 API 过载和内存峰值
     )
 
     await result.env.reset()
@@ -1330,16 +1360,26 @@ async def run_twitter_simulation(
         if (round_num + 1) % 20 == 0:
             progress = (round_num + 1) / total_rounds * 100
             log_info(f"Day {simulated_day}, {simulated_hour:02d}:00 - Round {round_num + 1}/{total_rounds} ({progress:.1f}%)")
-    
+
+        # Periodic memory management to prevent OOM kills.
+        # OASIS provides fresh DB observations each round, so accumulated
+        # LLM history is redundant after it has been acted upon.
+        if (round_num + 1) % 5 == 0:
+            gc.collect()
+        if (round_num + 1) % 10 == 0:
+            freed = _free_agent_memory(result.agent_graph)
+            if freed > 0:
+                log_info(f"内存清理: 已重置 {freed} 个Agent的LLM历史 (round {round_num + 1})")
+
     # 注意：不关闭环境，保留给Interview使用
-    
+
     if action_logger:
         action_logger.log_simulation_end(total_rounds, total_actions)
-    
+
     result.total_actions = total_actions
     elapsed = (datetime.now() - start_time).total_seconds()
     log_info(f"模拟循环完成! 耗时: {elapsed:.1f}秒, 总动作: {total_actions}")
-    
+
     return result
 
 
@@ -1407,7 +1447,7 @@ async def run_reddit_simulation(
         agent_graph=result.agent_graph,
         platform=oasis.DefaultPlatformType.REDDIT,
         database_path=db_path,
-        semaphore=int(os.environ.get("OASIS_SEMAPHORE", "8")),  # 限制最大并发 LLM 请求数，防止 API 过载
+        semaphore=int(os.environ.get("OASIS_SEMAPHORE", "4")),  # 限制最大并发 LLM 请求数，防止 API 过载和内存峰值
     )
 
     await result.env.reset()
@@ -1540,16 +1580,24 @@ async def run_reddit_simulation(
         if (round_num + 1) % 20 == 0:
             progress = (round_num + 1) / total_rounds * 100
             log_info(f"Day {simulated_day}, {simulated_hour:02d}:00 - Round {round_num + 1}/{total_rounds} ({progress:.1f}%)")
-    
+
+        # Periodic memory management to prevent OOM kills.
+        if (round_num + 1) % 5 == 0:
+            gc.collect()
+        if (round_num + 1) % 10 == 0:
+            freed = _free_agent_memory(result.agent_graph)
+            if freed > 0:
+                log_info(f"内存清理: 已重置 {freed} 个Agent的LLM历史 (round {round_num + 1})")
+
     # 注意：不关闭环境，保留给Interview使用
-    
+
     if action_logger:
         action_logger.log_simulation_end(total_rounds, total_actions)
-    
+
     result.total_actions = total_actions
     elapsed = (datetime.now() - start_time).total_seconds()
     log_info(f"模拟循环完成! 耗时: {elapsed:.1f}秒, 总动作: {total_actions}")
-    
+
     return result
 
 

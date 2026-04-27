@@ -94,6 +94,44 @@ def parse_ontology(ontology: Dict[str, Any]):
     )
 
 
+def build_extraction_instructions(
+    entity_types: Optional[Dict[str, Any]],
+    edge_types: Optional[Dict[str, Any]],
+) -> Optional[str]:
+    """Build a single prompt string enumerating allowed entity + edge types.
+
+    Graphiti's own type listings in the extraction prompt aren't strongly
+    respected by weaker LLMs (GLM etc.), so we repeat the hard constraint
+    in the ``custom_extraction_instructions`` block. Returns ``None`` when
+    no ontology is configured.
+    """
+    if not entity_types and not edge_types:
+        return None
+
+    parts: List[str] = []
+    if entity_types:
+        allowed_entities = ", ".join(entity_types.keys())
+        parts.append(
+            f"The ONLY valid entity types are: [{allowed_entities}]. "
+            "Do NOT invent new entity types. If something does not fit one of these "
+            "types exactly, skip it entirely — do not extract it, do not rename it, "
+            "do not approximate it."
+        )
+    if edge_types:
+        allowed_edges = ", ".join(edge_types.keys())
+        parts.append(
+            f"The ONLY valid values for relation_type are: [{allowed_edges}]. "
+            "Do NOT invent new relation types. If a relationship does not fit one "
+            "of the listed types exactly, skip that relationship entirely — do not "
+            "extract it, do not rename it, do not approximate it."
+        )
+    parts.append(
+        "Only extract entities that participate in at least one relationship of the "
+        "listed relation types. Skip standalone mentions that would produce no edges."
+    )
+    return "IMPORTANT: " + " ".join(parts)
+
+
 class GraphBuilderService:
     """
     图谱构建服务
@@ -223,17 +261,9 @@ class GraphBuilderService:
         ``add_episode()`` call.
         """
         self._entity_types, self._edge_types, self._edge_type_map = parse_ontology(ontology)
-        # Enumerate allowed types in the prompt — graphiti's own edge_types
-        # listing isn't strongly respected by weaker LLMs (GLM etc.).
-        self._extraction_instructions: Optional[str] = None
-        if self._edge_types:
-            allowed = ", ".join(self._edge_types.keys())
-            self._extraction_instructions = (
-                f"IMPORTANT: The ONLY valid values for relation_type are: [{allowed}]. "
-                "Do NOT invent new relation types under any circumstance. If a relationship "
-                "does not fit one of the listed types exactly, skip that relationship entirely "
-                "— do not extract it, do not rename it, do not approximate it."
-            )
+        self._extraction_instructions = build_extraction_instructions(
+            self._entity_types, self._edge_types
+        )
 
     def add_text_batches(
         self,

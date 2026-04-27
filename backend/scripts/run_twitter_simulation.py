@@ -15,6 +15,7 @@ OASIS Twitter模拟预设脚本
 
 import argparse
 import asyncio
+import gc
 import json
 import logging
 import os
@@ -597,7 +598,7 @@ class TwitterSimulationRunner:
             agent_graph=self.agent_graph,
             platform=oasis.DefaultPlatformType.TWITTER,
             database_path=db_path,
-            semaphore=30,  # 限制最大并发 LLM 请求数，防止 API 过载
+            semaphore=int(os.environ.get("OASIS_SEMAPHORE", "4")),  # 限制最大并发 LLM 请求数，防止 API 过载和内存峰值
         )
         
         await self.env.reset()
@@ -665,6 +666,24 @@ class TwitterSimulationRunner:
                       f"Round {round_num + 1}/{total_rounds} ({progress:.1f}%) "
                       f"- {len(active_agents)} agents active "
                       f"- elapsed: {elapsed:.1f}s")
+
+            # Periodic memory management to prevent OOM kills
+            if (round_num + 1) % 5 == 0:
+                gc.collect()
+            if (round_num + 1) % 10 == 0:
+                freed = 0
+                try:
+                    for _aid, agent in self.agent_graph.get_agents():
+                        if hasattr(agent, 'reset'):
+                            agent.reset()
+                            freed += 1
+                        elif hasattr(agent, 'memory') and hasattr(agent.memory, 'clear'):
+                            agent.memory.clear()
+                            freed += 1
+                except Exception:
+                    pass
+                if freed > 0:
+                    print(f"  内存清理: 已重置 {freed} 个Agent的LLM历史 (round {round_num + 1})")
         
         total_elapsed = (datetime.now() - start_time).total_seconds()
         print(f"\n模拟循环完成!")

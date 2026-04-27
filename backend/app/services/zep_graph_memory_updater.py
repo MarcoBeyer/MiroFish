@@ -16,7 +16,7 @@ from ..config import Config
 from ..utils.logger import get_logger
 from ..utils.graphiti_client import get_graphiti, run_async
 from ..utils.locale import get_locale, set_locale
-from .graph_builder import parse_ontology
+from .graph_builder import parse_ontology, build_extraction_instructions
 
 logger = get_logger('mirofish.zep_graph_memory_updater')
 
@@ -248,17 +248,9 @@ class ZepGraphMemoryUpdater:
         self._extraction_instructions: Optional[str] = None
         if ontology:
             self._entity_types, self._edge_types, self._edge_type_map = parse_ontology(ontology)
-            # Enumerate allowed relation types directly in the prompt — graphiti's
-            # own edge_types listing isn't strongly respected by weaker LLMs (GLM etc.),
-            # so showing the concrete list as instruction text reduces hallucinated types.
-            if self._edge_types:
-                allowed = ", ".join(self._edge_types.keys())
-                self._extraction_instructions = (
-                    f"IMPORTANT: The ONLY valid values for relation_type are: [{allowed}]. "
-                    "Do NOT invent new relation types under any circumstance. If a relationship "
-                    "does not fit one of the listed types exactly, skip that relationship entirely "
-                    "— do not extract it, do not rename it, do not approximate it."
-                )
+            self._extraction_instructions = build_extraction_instructions(
+                self._entity_types, self._edge_types
+            )
         
         # 活动队列
         self._activity_queue: Queue = Queue()

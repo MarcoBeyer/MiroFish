@@ -224,6 +224,12 @@ class ZepGraphMemoryUpdater:
     
     # 发送间隔（秒），避免请求过快
     SEND_INTERVAL = 0.5
+
+    # 队列上限，防止 Zep 更新在高负载下无限积压内存
+    MAX_QUEUE_SIZE = 500
+
+    # 每次从队列里额外批量拉取的上限，减少单条消费导致的积压
+    MAX_DRAIN_PER_CYCLE = 100
     
     # 重试配置
     MAX_RETRIES = 3
@@ -253,7 +259,7 @@ class ZepGraphMemoryUpdater:
             )
         
         # 活动队列
-        self._activity_queue: Queue = Queue()
+        self._activity_queue: Queue = Queue(maxsize=self.MAX_QUEUE_SIZE)
         
         # 按平台分组的活动缓冲区（每个平台各自累积到BATCH_SIZE后批量发送）
         self._platform_buffers: Dict[str, List[AgentActivity]] = {
@@ -272,6 +278,7 @@ class ZepGraphMemoryUpdater:
         self._total_items_sent = 0  # 成功发送到Zep的活动条数
         self._failed_count = 0      # 发送失败的批次数
         self._skipped_count = 0     # 被过滤跳过的活动数（DO_NOTHING）
+        self._dropped_count = 0     # 队列满时丢弃的旧活动数
         
         logger.info(f"ZepGraphMemoryUpdater 初始化完成: graph_id={graph_id}, batch_size={self.BATCH_SIZE}")
     
@@ -340,7 +347,19 @@ class ZepGraphMemoryUpdater:
             self._skipped_count += 1
             return
         
-        self._activity_queue.put(activity)
+        # 队列满时丢弃最旧的一条，避免后台更新速度跟不上时无限占用内存
+        if self._activity_queue.full():
+            try:
+                self._activity_queue.get_nowait()
+                self._dropped_count += 1
+            except Empty:
+                pass
+
+        try:
+            self._activity_queue.put_nowait(activity)
+        except Exception:
+            self._dropped_count += 1
+            return
         self._total_activities += 1
         logger.debug(f"添加活动到Zep队列: {activity.agent_name} - {activity.action_type}")
     
@@ -373,32 +392,51 @@ class ZepGraphMemoryUpdater:
         set_locale(locale)
         while self._running or not self._activity_queue.empty():
             try:
-                # 尝试从队列获取活动（超时1秒）
-                try:
-                    activity = self._activity_queue.get(timeout=1)
-                    
-                    # 将活动添加到对应平台的缓冲区
-                    platform = activity.platform.lower()
-                    with self._buffer_lock:
-                        if platform not in self._platform_buffers:
-                            self._platform_buffers[platform] = []
-                        self._platform_buffers[platform].append(activity)
-                        
-                        # 检查该平台是否达到批量大小
-                        if len(self._platform_buffers[platform]) >= self.BATCH_SIZE:
-                            batch = self._platform_buffers[platform][:self.BATCH_SIZE]
-                            self._platform_buffers[platform] = self._platform_buffers[platform][self.BATCH_SIZE:]
-                            # 释放锁后再发送
-                            self._send_batch_activities(batch, platform)
-                            # 发送间隔，避免请求过快
-                            time.sleep(self.SEND_INTERVAL)
-                    
-                except Empty:
-                    pass
+                drained = self._drain_queued_activities()
+                if drained:
+                    self._append_to_platform_buffers(drained)
+                    self._flush_ready_platform_batches()
                     
             except Exception as e:
                 logger.error(f"工作循环异常: {e}")
                 time.sleep(1)
+
+    def _drain_queued_activities(self) -> List[AgentActivity]:
+        """一次性从队列里拉取一批活动，减少单条消费带来的积压。"""
+        try:
+            first_item = self._activity_queue.get(timeout=1)
+        except Empty:
+            return []
+
+        drained = [first_item]
+        for _ in range(self.MAX_DRAIN_PER_CYCLE - 1):
+            try:
+                drained.append(self._activity_queue.get_nowait())
+            except Empty:
+                break
+        return drained
+
+    def _append_to_platform_buffers(self, activities: List[AgentActivity]):
+        """把活动追加到各平台缓冲区。"""
+        with self._buffer_lock:
+            for item in activities:
+                platform = item.platform.lower()
+                if platform not in self._platform_buffers:
+                    self._platform_buffers[platform] = []
+                self._platform_buffers[platform].append(item)
+
+    def _flush_ready_platform_batches(self):
+        """发送所有已达到批量阈值的平台缓冲区。"""
+        with self._buffer_lock:
+            ready_batches = []
+            for platform, buffer in self._platform_buffers.items():
+                while len(buffer) >= self.BATCH_SIZE:
+                    ready_batches.append((platform, buffer[:self.BATCH_SIZE]))
+                    del buffer[:self.BATCH_SIZE]
+
+        for platform, batch in ready_batches:
+            self._send_batch_activities(batch, platform)
+            time.sleep(self.SEND_INTERVAL)
     
     def _send_batch_activities(self, activities: List[AgentActivity], platform: str):
         """
@@ -483,6 +521,7 @@ class ZepGraphMemoryUpdater:
             "items_sent": self._total_items_sent,        # 成功发送的活动条数
             "failed_count": self._failed_count,          # 发送失败的批次数
             "skipped_count": self._skipped_count,        # 被过滤跳过的活动数（DO_NOTHING）
+            "dropped_count": self._dropped_count,        # 队列满时丢弃的旧活动数
             "queue_size": self._activity_queue.qsize(),
             "buffer_sizes": buffer_sizes,                # 各平台缓冲区大小
             "running": self._running,

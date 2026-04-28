@@ -64,8 +64,11 @@ class UnicodeFormatter(logging.Formatter):
                 return chr(int(match.group(1), 16))
             except (ValueError, OverflowError):
                 return match.group(0)
-        
-        return self.UNICODE_ESCAPE_PATTERN.sub(replace_unicode, result)
+
+        # Avoid lone-surrogate crashes when handlers encode to UTF-8.
+        # Some escaped emoji sequences can decode into surrogate code points.
+        converted = self.UNICODE_ESCAPE_PATTERN.sub(replace_unicode, result)
+        return converted.encode('utf-8', errors='replace').decode('utf-8')
 
 
 class MaxTokensWarningFilter(logging.Filter):

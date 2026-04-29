@@ -1097,45 +1097,71 @@ def get_active_agents_for_round(
     
     base_min = time_config.get("agents_per_hour_min", 5)
     base_max = time_config.get("agents_per_hour_max", 20)
-    
-    peak_hours = time_config.get("peak_hours", [9, 10, 11, 14, 15, 20, 21, 22])
-    off_peak_hours = time_config.get("off_peak_hours", [0, 1, 2, 3, 4, 5])
-    
-    if current_hour in peak_hours:
-        multiplier = time_config.get("peak_activity_multiplier", 1.5)
-    elif current_hour in off_peak_hours:
-        multiplier = time_config.get("off_peak_activity_multiplier", 0.3)
-    else:
-        multiplier = 1.0
-    
+
+    multiplier = _resolve_activity_multiplier(time_config, current_hour)
+    hard_cap = _resolve_active_agents_cap(time_config)
+
     target_count = int(random.uniform(base_min, base_max) * multiplier)
-    
-    candidates = []
+    if isinstance(hard_cap, int) and hard_cap > 0:
+        target_count = min(target_count, hard_cap)
+
+    candidates = _collect_round_candidates(agent_configs, current_hour)
+    if not candidates:
+        return []
+
+    selected_ids = random.sample(candidates, min(target_count, len(candidates)))
+    return _materialize_active_agents(env, selected_ids)
+
+
+def _collect_round_candidates(agent_configs: List[Dict[str, Any]], current_hour: int) -> List[int]:
+    """Collect eligible agent ids for the current hour."""
+    candidates: List[int] = []
     for cfg in agent_configs:
         agent_id = cfg.get("agent_id", 0)
         active_hours = cfg.get("active_hours", list(range(8, 23)))
         activity_level = cfg.get("activity_level", 0.5)
-        
-        if current_hour not in active_hours:
-            continue
-        
-        if random.random() < activity_level:
+        if current_hour in active_hours and random.random() < activity_level:
             candidates.append(agent_id)
-    
-    selected_ids = random.sample(
-        candidates, 
-        min(target_count, len(candidates))
-    ) if candidates else []
-    
-    active_agents = []
+    return candidates
+
+
+def _materialize_active_agents(env, selected_ids: List[int]) -> List[Tuple[int, Any]]:
+    """Convert selected ids to actual agent instances, skipping missing agents."""
+    active_agents: List[Tuple[int, Any]] = []
     for agent_id in selected_ids:
         try:
             agent = env.agent_graph.get_agent(agent_id)
             active_agents.append((agent_id, agent))
         except Exception:
             pass
-    
     return active_agents
+
+
+def _resolve_activity_multiplier(time_config: Dict[str, Any], current_hour: int) -> float:
+    """Resolve hourly activity multiplier from peak/off-peak config."""
+    peak_hours = time_config.get("peak_hours", [9, 10, 11, 14, 15, 20, 21, 22])
+    off_peak_hours = time_config.get("off_peak_hours", [0, 1, 2, 3, 4, 5])
+    if current_hour in peak_hours:
+        return time_config.get("peak_activity_multiplier", 1.5)
+    if current_hour in off_peak_hours:
+        return time_config.get("off_peak_activity_multiplier", 0.3)
+    return 1.0
+
+
+def _resolve_active_agents_cap(time_config: Dict[str, Any]) -> Optional[int]:
+    """Resolve optional per-round hard cap from config or env."""
+    hard_cap = time_config.get("max_active_agents_per_round")
+    if isinstance(hard_cap, int) and hard_cap > 0:
+        return hard_cap
+
+    env_cap = os.getenv("MIROFISH_MAX_ACTIVE_AGENTS_PER_ROUND")
+    if not env_cap:
+        return None
+    try:
+        parsed = int(env_cap)
+        return parsed if parsed > 0 else None
+    except ValueError:
+        return None
 
 
 def _free_agent_memory(agent_graph) -> int:
@@ -1165,6 +1191,76 @@ def _free_agent_memory(agent_graph) -> int:
     except Exception:
         pass
     return freed
+
+
+def _read_cgroup_memory_mb() -> Optional[Tuple[float, float, float]]:
+    """Return (used_mb, limit_mb, ratio) from cgroup when available."""
+    candidates = [
+        ("/sys/fs/cgroup/memory.current", "/sys/fs/cgroup/memory.max"),          # cgroup v2
+        ("/sys/fs/cgroup/memory/memory.usage_in_bytes", "/sys/fs/cgroup/memory/memory.limit_in_bytes"),  # cgroup v1
+    ]
+    for used_path, limit_path in candidates:
+        try:
+            if not (os.path.exists(used_path) and os.path.exists(limit_path)):
+                continue
+            with open(used_path, 'r', encoding='utf-8') as f:
+                used_raw = f.read().strip()
+            with open(limit_path, 'r', encoding='utf-8') as f:
+                limit_raw = f.read().strip()
+
+            if not used_raw or not limit_raw or limit_raw == 'max':
+                continue
+
+            used = int(used_raw)
+            limit = int(limit_raw)
+            if limit <= 0:
+                continue
+
+            used_mb = used / (1024 * 1024)
+            limit_mb = limit / (1024 * 1024)
+            return used_mb, limit_mb, used / limit
+        except Exception:
+            continue
+    return None
+
+
+def _adaptive_memory_maintenance(agent_graph, round_num: int, log_info):
+    """Aggressive memory protection for long-running high-agent simulations."""
+    if round_num % 3 == 0:
+        gc.collect()
+
+    if round_num % 5 == 0:
+        freed = _free_agent_memory(agent_graph)
+        if freed > 0:
+            log_info(f"内存清理: 已重置 {freed} 个Agent的LLM历史 (round {round_num})")
+        gc.collect()
+
+    mem = _read_cgroup_memory_mb()
+    if not mem:
+        return
+
+    used_mb, limit_mb, ratio = mem
+    if round_num == 1 or round_num % 5 == 0:
+        log_info(f"内存监控: {used_mb:.0f}/{limit_mb:.0f} MB ({ratio * 100:.1f}%)")
+
+    soft_ratio = float(os.getenv("MIROFISH_MEM_SOFT_RATIO", "0.62"))
+    hard_ratio = float(os.getenv("MIROFISH_MEM_HARD_RATIO", "0.70"))
+
+    if ratio >= soft_ratio:
+        freed = _free_agent_memory(agent_graph)
+        collected = gc.collect()
+        log_info(
+            f"内存预警触发(>= {soft_ratio * 100:.0f}%): {ratio * 100:.1f}% | "
+            f"重置Agent={freed}, gc回收对象={collected}"
+        )
+
+    if ratio >= hard_ratio:
+        freed = _free_agent_memory(agent_graph)
+        collected = gc.collect()
+        log_info(
+            f"内存高水位(>= {hard_ratio * 100:.0f}%): {ratio * 100:.1f}% | "
+            f"二次清理重置Agent={freed}, gc回收对象={collected}"
+        )
 
 
 class PlatformSimulation:
@@ -1361,15 +1457,8 @@ async def run_twitter_simulation(
             progress = (round_num + 1) / total_rounds * 100
             log_info(f"Day {simulated_day}, {simulated_hour:02d}:00 - Round {round_num + 1}/{total_rounds} ({progress:.1f}%)")
 
-        # Periodic memory management to prevent OOM kills.
-        # OASIS provides fresh DB observations each round, so accumulated
-        # LLM history is redundant after it has been acted upon.
-        if (round_num + 1) % 5 == 0:
-            gc.collect()
-        if (round_num + 1) % 10 == 0:
-            freed = _free_agent_memory(result.agent_graph)
-            if freed > 0:
-                log_info(f"内存清理: 已重置 {freed} 个Agent的LLM历史 (round {round_num + 1})")
+        # Aggressive memory management to reduce OOM risk under container limits.
+        _adaptive_memory_maintenance(result.agent_graph, round_num + 1, log_info)
 
     # 注意：不关闭环境，保留给Interview使用
 
@@ -1581,13 +1670,8 @@ async def run_reddit_simulation(
             progress = (round_num + 1) / total_rounds * 100
             log_info(f"Day {simulated_day}, {simulated_hour:02d}:00 - Round {round_num + 1}/{total_rounds} ({progress:.1f}%)")
 
-        # Periodic memory management to prevent OOM kills.
-        if (round_num + 1) % 5 == 0:
-            gc.collect()
-        if (round_num + 1) % 10 == 0:
-            freed = _free_agent_memory(result.agent_graph)
-            if freed > 0:
-                log_info(f"内存清理: 已重置 {freed} 个Agent的LLM历史 (round {round_num + 1})")
+        # Aggressive memory management to reduce OOM risk under container limits.
+        _adaptive_memory_maintenance(result.agent_graph, round_num + 1, log_info)
 
     # 注意：不关闭环境，保留给Interview使用
 

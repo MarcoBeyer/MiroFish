@@ -9,10 +9,17 @@ services:
     volumes:
       - neo4j_data:/data
     healthcheck:
-      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:7474 || exit 1"]
+      test:
+        [
+          "CMD-SHELL",
+          "cypher-shell -a bolt://localhost:7687 -u ${GRAPH_USER:-neo4j} -p
+            ${GRAPH_PASSWORD:-mirofish123} 'RETURN 1;' > /dev/null 2>&1 || exit
+            1",
+        ]
       interval: 10s
-      timeout: 5s
-      retries: 5
+      timeout: 10s
+      retries: 30
+      start_period: 90s
     networks:
       - mirofish-internal
 

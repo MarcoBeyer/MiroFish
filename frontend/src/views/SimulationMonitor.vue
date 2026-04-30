@@ -141,6 +141,15 @@
               Resume Reddit (R{{ runStatus?.reddit_current_round }}/{{ runStatus?.total_rounds }})
             </button>
             <button
+              class="action-btn report"
+              @click="handleGenerateReport"
+              :disabled="actionLoading || !canGenerateReport"
+              v-if="runStatus && ['failed', 'stopped', 'completed'].includes(runStatus.runner_status)"
+              :title="canGenerateReport ? 'Generate report from collected interactions (Step 4)' : 'Need at least one recorded interaction'"
+            >
+              Generate Report (R{{ runStatus?.current_round || 0 }} • {{ runStatus?.total_actions_count || 0 }} acts)
+            </button>
+            <button
               class="action-btn delete"
               @click="handleDelete"
               :disabled="actionLoading"
@@ -224,6 +233,7 @@ import {
   getSimulationLogs,
   deleteSimulation,
 } from '../api/simulation'
+import { generateReport } from '../api/report'
 
 const router = useRouter()
 
@@ -249,6 +259,14 @@ const runnerClass = computed(() => {
   if (!s) return ''
   const map = { running: 'status-running', completed: 'status-completed', failed: 'status-failed', starting: 'status-starting', stopped: 'status-stopped' }
   return map[s] || ''
+})
+
+const canGenerateReport = computed(() => {
+  const s = runStatus.value
+  if (!s) return false
+  return (s.total_actions_count || 0) > 0
+    || (s.twitter_actions_count || 0) > 0
+    || (s.reddit_actions_count || 0) > 0
 })
 
 const statusBadge = computed(() => {
@@ -410,6 +428,32 @@ async function handleResumePlatform(platform) {
   }
 }
 
+async function handleGenerateReport() {
+  if (!selectedSim.value) return
+  actionLoading.value = true
+  actionMessage.value = ''
+  try {
+    const res = await generateReport({
+      simulation_id: selectedSim.value.simulation_id,
+      force_regenerate: true,
+    })
+    const reportId = res.data?.report_id || res.report_id
+    if (reportId) {
+      actionMessage.value = `Report generation started (${reportId}). Opening Step 4...`
+      actionMessageClass.value = 'success'
+      router.push({ name: 'Report', params: { reportId } })
+    } else {
+      actionMessage.value = res.error || 'Report generation failed to start'
+      actionMessageClass.value = 'error'
+    }
+  } catch (e) {
+    actionMessage.value = e.response?.data?.error || e.message || 'Report generation failed'
+    actionMessageClass.value = 'error'
+  } finally {
+    actionLoading.value = false
+  }
+}
+
 function handleDelete() {
   showDeleteConfirm.value = true
 }
@@ -560,6 +604,8 @@ onUnmounted(() => { if (pollTimer) clearInterval(pollTimer) })
 .action-btn.resume-reddit:hover:not(:disabled) { background: #b83600; color: white; }
 .action-btn.delete { background: transparent; border: 1px solid #ef4444; color: #ef4444; }
 .action-btn.delete:hover:not(:disabled) { background: #ef4444; color: white; }
+.action-btn.report { background: var(--orange); color: white; }
+.action-btn.report:hover:not(:disabled) { opacity: 0.85; }
 
 .action-message { margin-top: 8px; font-size: 12px; font-family: var(--font-mono); }
 .action-message.success { color: #22c55e; }
